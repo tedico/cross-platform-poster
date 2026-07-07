@@ -1,0 +1,6 @@
+# Slots ONLY. Approval gate (auto/gated) is owned by each project's copied adapter.
+# Slot times quantize to :00/:15/:30/:45 (scheduler ticks every 15 minutes).
+useful-math:
+  platforms:
+    youtube-shorts: { slot: "12:00", tz: "America/New_York", cadence: daily }
+    ig-reels:       { slot: "12:00", tz: "America/New_York", cadence: daily }
