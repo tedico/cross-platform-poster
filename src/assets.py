@@ -1,0 +1,28 @@
+"""Download a queue row's Asset URL(s) to local temp files so Postiz can
+ingest them. um-assets style stores take an optional X-Token header."""
+from pathlib import Path
+from urllib.parse import urlparse
+
+import requests
+
+
+class AssetError(Exception):
+    pass
+
+
+def download_assets(urls: list, dest_dir, token: str = None) -> list:
+    dest_dir = Path(dest_dir)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    headers = {"X-Token": token} if token else {}
+    paths = []
+    for url in urls:
+        name = Path(urlparse(url).path).name or "asset.bin"
+        r = requests.get(url, headers=headers, stream=True, timeout=300)
+        if r.status_code != 200:
+            raise AssetError(f"GET {url} -> HTTP {r.status_code}")
+        out = dest_dir / name
+        with out.open("wb") as fh:
+            for chunk in r.iter_content(chunk_size=1 << 20):
+                fh.write(chunk)
+        paths.append(out)
+    return paths
