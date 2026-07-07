@@ -40,6 +40,9 @@ def load_channels(path) -> dict:
             if not (0 <= hh <= 23) or mm not in VALID_MINUTES:
                 raise ConfigError(
                     f"{project}/{platform}: slot '{slot}' must be HH:00/:15/:30/:45")
+            if slot != f"{hh:02d}:{mm:02d}":
+                raise ConfigError(
+                    f"{project}/{platform}: slot '{slot}' must be zero-padded HH:MM (use {hh:02d}:{mm:02d})")
             tz = s.get("tz", "")
             try:
                 ZoneInfo(tz)

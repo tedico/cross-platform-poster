@@ -8,6 +8,8 @@ from zoneinfo import ZoneInfo
 
 
 def due_slots(cfg: dict, now: datetime) -> list[tuple[str, str]]:
+    if now.tzinfo is None:
+        raise ValueError("due_slots requires an aware datetime")
     due = []
     for project, pcfg in cfg.items():
         for platform, s in pcfg["platforms"].items():

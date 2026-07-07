@@ -49,6 +49,16 @@ def test_rejects_unquoted_slot_yaml_sexagesimal(tmp_path):
         load_channels(p)
 
 
+def test_rejects_non_zero_padded_slot(tmp_path):
+    p = _write(tmp_path, (
+        "useful-math:\n"
+        "  platforms:\n"
+        "    youtube-shorts: { slot: \"9:00\", tz: \"America/New_York\", cadence: daily }\n"
+    ))
+    with pytest.raises(ConfigError, match="zero-padded"):
+        load_channels(p)
+
+
 def test_rejects_unknown_cadence(tmp_path):
     p = _write(tmp_path, (
         "useful-math:\n"

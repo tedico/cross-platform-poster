@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+import pytest
+
 from src.slots import due_slots
 
 CFG = {
@@ -33,3 +35,8 @@ def test_evening_slot_in_local_tz():
     # 18:30 ET == 22:30 UTC in July
     now = datetime(2026, 7, 8, 22, 30, tzinfo=timezone.utc)
     assert due_slots(CFG, now) == [("useful-math", "ig-reels")]
+
+
+def test_rejects_naive_datetime():
+    with pytest.raises(ValueError, match="aware"):
+        due_slots(CFG, datetime(2026, 7, 8, 16, 0))
