@@ -61,11 +61,18 @@ def mark_posting(client, page: dict):
 def record_result(client, page: dict, platform: str, url: str = None, error: str = None):
     """Stamp one platform's outcome and derive the row status:
     failure -> Failed; all platforms posted -> Posted; else back to Ready."""
+    if url is None and error is None:
+        raise ValueError("record_result needs url or error")
+    # Re-fetch: the caller's snapshot may be stale (another slot's tick may have
+    # stamped a link since); a stale snapshot would drop links and re-open
+    # already-posted platforms.
+    page = client.pages.retrieve(page_id=page["id"])
     fields = row_fields(page)
     if error is not None:
         _set(client, page["id"], {
             "Status": {"select": {"name": "Failed"}},
-            "Error": {"rich_text": [{"text": {"content": f"{platform}: {error}"}}]},
+            # Notion caps a rich_text segment at 2000 chars.
+            "Error": {"rich_text": [{"text": {"content": f"{platform}: {error}"[:2000]}}]},
         })
         return
     links = parse_posted_links(fields["posted_links"])
@@ -75,6 +82,7 @@ def record_result(client, page: dict, platform: str, url: str = None, error: str
     _set(client, page["id"], {
         "Status": {"select": {"name": "Posted" if done else "Ready"}},
         "Posted Links": {"rich_text": [{"text": {"content": text}}]},
+        "Error": {"rich_text": []},
     })
 
 

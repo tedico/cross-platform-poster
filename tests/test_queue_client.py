@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock
 
+import pytest
+
 from src.queue_client import (
     find_due_row, mark_posting, record_result, parse_posted_links, row_fields,
 )
@@ -57,6 +59,7 @@ def test_parse_posted_links():
 def test_record_result_success_all_done_marks_posted():
     client = MagicMock()
     row = _page(platforms=("youtube-shorts",))
+    client.pages.retrieve.return_value = row
     record_result(client, row, "youtube-shorts", url="https://yt/1")
     props = client.pages.update.call_args.kwargs["properties"]
     assert props["Status"]["select"]["name"] == "Posted"
@@ -66,6 +69,7 @@ def test_record_result_success_all_done_marks_posted():
 def test_record_result_success_remaining_goes_back_to_ready():
     client = MagicMock()
     row = _page(platforms=("youtube-shorts", "ig-reels"))
+    client.pages.retrieve.return_value = row
     record_result(client, row, "youtube-shorts", url="https://yt/1")
     props = client.pages.update.call_args.kwargs["properties"]
     assert props["Status"]["select"]["name"] == "Ready"
@@ -74,10 +78,31 @@ def test_record_result_success_remaining_goes_back_to_ready():
 def test_record_result_failure_marks_failed_with_error():
     client = MagicMock()
     row = _page()
+    client.pages.retrieve.return_value = row
     record_result(client, row, "ig-reels", error="token expired")
     props = client.pages.update.call_args.kwargs["properties"]
     assert props["Status"]["select"]["name"] == "Failed"
     assert "ig-reels" in props["Error"]["rich_text"][0]["text"]["content"]
+
+
+def test_record_result_refetches_page():
+    client = MagicMock()
+    stale = _page(platforms=("youtube-shorts", "ig-reels"))  # snapshot has no links
+    fresh = _page(platforms=("youtube-shorts", "ig-reels"),
+                  posted_links="youtube-shorts: https://yt/1")
+    client.pages.retrieve.return_value = fresh
+    record_result(client, stale, "ig-reels", url="https://ig/2")
+    props = client.pages.update.call_args.kwargs["properties"]
+    content = props["Posted Links"]["rich_text"][0]["text"]["content"]
+    assert "youtube-shorts: https://yt/1" in content
+    assert "ig-reels: https://ig/2" in content
+    assert props["Status"]["select"]["name"] == "Posted"
+
+
+def test_record_result_requires_url_or_error():
+    client = MagicMock()
+    with pytest.raises(ValueError):
+        record_result(client, _page(), "ig-reels")
 
 
 def test_row_fields_extracts_plain_values():
