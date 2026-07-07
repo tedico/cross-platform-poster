@@ -38,6 +38,17 @@ def test_rejects_bad_timezone(tmp_path):
         load_channels(p)
 
 
+def test_rejects_unquoted_slot_yaml_sexagesimal(tmp_path):
+    # YAML 1.1 parses unquoted 12:00 as the integer 720
+    p = _write(tmp_path, (
+        "useful-math:\n"
+        "  platforms:\n"
+        "    youtube-shorts: { slot: 12:00, tz: \"America/New_York\", cadence: daily }\n"
+    ))
+    with pytest.raises(ConfigError, match="slot"):
+        load_channels(p)
+
+
 def test_rejects_unknown_cadence(tmp_path):
     p = _write(tmp_path, (
         "useful-math:\n"
