@@ -6,7 +6,7 @@ import argparse
 import os
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -15,7 +15,7 @@ from notion_client import Client
 from src.assets import download_assets
 from src.config_loader import load_channels
 from src.postiz_client import (
-    PLATFORM_IDENTIFIER, PostizClient, build_settings,
+    PLATFORM_IDENTIFIER, PostizClient, PostizError, build_settings,
 )
 from src.queue_client import (
     find_due_row, find_stuck_posting, mark_posting, record_result, row_fields,
@@ -23,10 +23,15 @@ from src.queue_client import (
 from src.slots import due_slots
 
 STAMP_DIR = Path.home() / ".cross-platform-poster"
+STUCK_AGE = timedelta(hours=1)  # a Posting row younger than this may be a live tick
 
 
 def _publish(notion, postiz, page, platform, dry_run) -> str:
     """Publish one row to one platform. Returns the summary line."""
+    if platform not in PLATFORM_IDENTIFIER:
+        # Row stays Ready; the FAILED line SMSes every tick until config is fixed.
+        raise PostizError(f"platform '{platform}' is in channels.yaml "
+                          f"but not supported by the postiz client")
     fields = row_fields(page)
     if dry_run:
         return (f"DRY-RUN would post '{fields['title']}' -> {platform} "
@@ -57,26 +62,43 @@ def run_tick(cfg, env, notion, postiz, now, stamp_dir=STAMP_DIR, dry_run=False) 
     stamp_dir.mkdir(parents=True, exist_ok=True)
     failures, lines = [], []
 
-    stuck = find_stuck_posting(notion, env["db_id"])
-    for page in stuck:
-        title = row_fields(page)["title"]
-        if not dry_run:
-            record_result(notion, page, "(stuck)",
-                          error="stuck in Posting — tick crashed mid-flight; "
-                                "check the platform for a dupe, then re-Ready")
-        failures.append(f"STUCK row '{title}' was in Posting")
+    try:
+        stuck = find_stuck_posting(notion, env["db_id"])
+        for page in stuck:
+            edited = datetime.fromisoformat(
+                page["last_edited_time"].replace("Z", "+00:00"))
+            if now - edited < STUCK_AGE:
+                continue  # probably a live tick still working this row
+            title = row_fields(page)["title"]
+            if not dry_run:
+                record_result(
+                    notion, page, "(stuck)",
+                    error="stuck in Posting >1h — tick likely crashed mid-flight. "
+                          "If the post EXISTS on the platform, add 'platform: url' "
+                          "to Posted Links BEFORE re-Ready (else it will re-post); "
+                          "if absent, just re-Ready.")
+            failures.append(f"STUCK row '{title}' was in Posting")
 
-    for project, platform in due_slots(cfg, now):
-        notion_project = env["project_names"].get(project, project)
-        page = find_due_row(notion, env["db_id"], notion_project, platform)
-        if page is None:
-            continue  # empty queue: silent skip by design
-        try:
-            lines.append(_publish(notion, postiz, page, platform, dry_run))
-        except Exception as e:  # noqa: BLE001
-            failures.append(f"FAILED {project}->{platform}: {e}")
+        for project, platform in due_slots(cfg, now):
+            if project not in env["project_names"]:
+                failures.append(f"CONFIG: project '{project}' missing from "
+                                f"project_names mapping")
+                continue
+            notion_project = env["project_names"][project]
+            page = find_due_row(notion, env["db_id"], notion_project, platform)
+            if page is None:
+                continue  # empty queue: silent skip by design
+            try:
+                lines.append(_publish(notion, postiz, page, platform, dry_run))
+            except Exception as e:  # noqa: BLE001
+                failures.append(f"FAILED {project}->{platform}: {e}")
+    except Exception as e:  # noqa: BLE001 — SMS contract: always print, always exit 1
+        # Deliberately skips the stamp write so the freshness watchdog fires too.
+        print(f"TICK CRASHED: {e}")
+        return 1
 
-    (stamp_dir / "last_tick").write_text(now.isoformat())
+    if not dry_run:  # a dry run must not vouch for the real tick's liveness
+        (stamp_dir / "last_tick").write_text(now.isoformat())
     for line in lines:
         print(line)
     if failures:
