@@ -39,7 +39,11 @@ the Pivot section of `docs/superpowers/specs/2026-07-07-cross-platform-poster-de
 
 ## Setup
 
-Ted's one-time checklist, in order:
+Ted's one-time checklist, in order. First, bootstrap the local venv:
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+```
 
 1. **YouTube credentials** (slowest item — start first). Create a Google Cloud project,
    enable the YouTube Data API v3, create **Desktop app** OAuth credentials. Mint the
@@ -59,7 +63,7 @@ Ted's one-time checklist, in order:
    with it, then create the Post Queue DB:
 
    ```bash
-   python setup_notion.py <parent-page-url>
+   .venv/bin/python setup_notion.py <parent-page-url>
    ```
 
    It prints `POST_QUEUE_DB_ID`. Add the "🙋 Awaiting Approval" filtered view
@@ -144,7 +148,7 @@ This is the instruction guide for plugging ANYTHING into the poster.
 | Status | select | `Awaiting Approval` → `Ready` → `Posting` → `Posted` / `Failed` |
 | Posted Links | text | Permalinks per platform (`platform: url` lines), stamped by the tick |
 | Error | text | Failure detail, stamped by the tick |
-| Date Added | created time | Drives oldest-first draining |
+| (created time) | built-in | Drives oldest-first draining — Notion's automatic timestamp, no column needed |
 
 **Tick** (`src/tick.py`, GitHub Actions cron every 15 min): quantizes the tick time down
 to the 15-minute grid and compares it against each slot in that slot's own timezone, so a
@@ -195,7 +199,7 @@ Ted; SMS logic stays out of the GitHub Action.
                      error / stuck >1h        all platforms stamped   │   │
                               │                          │            └───┘
                               ▼                          ▼
-                           Failed ──fix + re-Ready──▶ Posted
+                           Failed ──fix + re-Ready──▶ Ready
 ```
 
 ## Configuration
@@ -214,7 +218,9 @@ Slots must be zero-padded `HH:MM`, quantized to `:00/:15/:30/:45`, with a valid 
 timezone; `cadence` currently only accepts `daily`. `src/config_loader.py` rejects
 anything else at startup.
 
-**Environment variables / secrets** (`.env.example` mirrors this):
+**Environment variables / secrets** (`.env.example` mirrors this, with one exception:
+`ADMIN_PAT` is workflow-only — consumed by `gh` in `refresh-ig-token.yml`, never by
+Python — so it's a GH secret only and not in `.env.example`):
 
 | Variable | Lives in | Purpose |
 |---|---|---|
@@ -243,6 +249,7 @@ SMSes every tick until the secret is set.
 | `FAILED ...: missing or empty env secret(s): ...` every tick | GH repo secret unset (Actions maps unset → empty string) | Set the listed secrets in Settings → Secrets; row is still `Ready`, no action on it needed |
 | Row `Failed`, Error shows an IG message with `***` in it | Token sanitized out of an IG API error: asset URL not publicly fetchable, invalid/expired token, or IG couldn't process the video | Verify the asset URL opens in a private browser window; check token validity; re-Ready after fixing |
 | Row stuck in `Posting` | Tick crashed mid-flight; the >1h sweep will mark it `Failed` with a recovery note | If the post EXISTS on the platform, add `platform: url` to Posted Links BEFORE re-Ready (else it re-posts); if absent, just re-Ready |
+| SMS: `N failed tick run(s) in the last 90 min: <run-url>` | A tick run exited non-zero | Open the run URL, read the last `FAILED`/`TICK CRASHED` line, then match it against the other rows in this table |
 | SMS: `no completed tick run in N min` | Scheduled workflows only run on the default branch; or GitHub auto-disabled the schedule after 60 days without repo activity | Merge to `main`; or re-enable BOTH workflows (tick AND refresh) under Actions → select workflow → Enable |
 | Heartbeat SMS on the 1st of the month | Monthly proof-of-life that the watchdog + SMS channel work | No action needed |
 | YouTube upload fails with `invalid_grant` | Refresh token expired — OAuth app not in production status (testing tokens die in 7 days) | Set the app to production, re-run `scripts/get_youtube_token.py`, update `YT_REFRESH_TOKEN` |
