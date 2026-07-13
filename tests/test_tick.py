@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
@@ -8,6 +9,10 @@ CFG = {"useful-math": {"platforms": {
 }}}
 NOW = datetime(2026, 7, 8, 16, 0, tzinfo=timezone.utc)  # 12:00 EDT
 ENV = {"db_id": "db1", "project_names": {"useful-math": "Useful Math"}}
+POSTER_ENV = {
+    "YT_CLIENT_ID": "cid", "YT_CLIENT_SECRET": "csec", "YT_REFRESH_TOKEN": "rtok",
+    "IG_USER_ID": "17840000", "IG_ACCESS_TOKEN": "igtok",
+}
 
 
 def _row(platforms=("youtube-shorts",)):
@@ -32,49 +37,50 @@ def _wire(mocker, row):
     mocker.patch("src.tick.find_due_row", return_value=row)
     mocker.patch("src.tick.find_stuck_posting", return_value=[])
     mocker.patch("src.tick.download_assets", return_value=["/tmp/hua.mp4"])
+    mocker.patch.dict(os.environ, POSTER_ENV)
     mark = mocker.patch("src.tick.mark_posting")
     record = mocker.patch("src.tick.record_result")
-    postiz = MagicMock()
-    postiz.integration_ids.return_value = {"youtube": "int-yt", "instagram": "int-ig"}
-    postiz.upload.return_value = {"id": "m1", "path": "/up/hua.mp4"}
-    postiz.create_post.return_value = {"id": "post-1"}
-    return mark, record, postiz
+    yt = mocker.patch("src.tick.yt_post",
+                      return_value="https://youtube.com/shorts/vid1")
+    ig = mocker.patch("src.tick.ig_post",
+                      return_value="https://www.instagram.com/reel/AB/")
+    return mark, record, yt, ig
 
 
 def test_happy_path_posts_and_records(mocker, tmp_path):
-    mark, record, postiz = _wire(mocker, _row())
-    code = run_tick(CFG, ENV, notion=MagicMock(), postiz=postiz, now=NOW,
+    mark, record, yt, ig = _wire(mocker, _row())
+    code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW,
                     stamp_dir=tmp_path, dry_run=False)
     assert code == 0
     mark.assert_called_once()
-    postiz.create_post.assert_called_once()
-    assert record.call_args.kwargs["url"]
+    yt.assert_called_once()
+    assert record.call_args.kwargs["url"] == "https://youtube.com/shorts/vid1"
 
 
 def test_empty_queue_is_silent_success(mocker, tmp_path):
     mocker.patch("src.tick.find_due_row", return_value=None)
     mocker.patch("src.tick.find_stuck_posting", return_value=[])
-    code = run_tick(CFG, ENV, notion=MagicMock(), postiz=MagicMock(), now=NOW,
+    code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW,
                     stamp_dir=tmp_path, dry_run=False)
     assert code == 0
 
 
-def test_postiz_failure_records_error_and_exits_nonzero(mocker, tmp_path):
-    mark, record, postiz = _wire(mocker, _row())
-    postiz.create_post.side_effect = Exception("boom")
-    code = run_tick(CFG, ENV, notion=MagicMock(), postiz=postiz, now=NOW,
+def test_poster_failure_records_error_and_exits_nonzero(mocker, tmp_path):
+    mark, record, yt, ig = _wire(mocker, _row())
+    yt.side_effect = Exception("boom")
+    code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW,
                     stamp_dir=tmp_path, dry_run=False)
     assert code == 1
     assert record.call_args.kwargs["error"]
 
 
-def test_dry_run_never_touches_postiz_or_status(mocker, tmp_path):
-    mark, record, postiz = _wire(mocker, _row())
-    code = run_tick(CFG, ENV, notion=MagicMock(), postiz=postiz, now=NOW,
+def test_dry_run_never_touches_platforms_or_status(mocker, tmp_path):
+    mark, record, yt, ig = _wire(mocker, _row())
+    code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW,
                     stamp_dir=tmp_path, dry_run=True)
     assert code == 0
-    postiz.upload.assert_not_called()
-    postiz.create_post.assert_not_called()
+    yt.assert_not_called()
+    ig.assert_not_called()
     mark.assert_not_called()
     record.assert_not_called()
     assert not (tmp_path / "last_tick").exists()  # dry run must not vouch for liveness
@@ -83,7 +89,7 @@ def test_dry_run_never_touches_postiz_or_status(mocker, tmp_path):
 def test_writes_last_tick_stamp(mocker, tmp_path):
     mocker.patch("src.tick.find_due_row", return_value=None)
     mocker.patch("src.tick.find_stuck_posting", return_value=[])
-    run_tick(CFG, ENV, notion=MagicMock(), postiz=MagicMock(), now=NOW,
+    run_tick(CFG, ENV, notion=MagicMock(), now=NOW,
              stamp_dir=tmp_path, dry_run=False)
     assert (tmp_path / "last_tick").exists()
 
@@ -92,7 +98,7 @@ def test_stuck_posting_row_exits_nonzero(mocker, tmp_path):
     mocker.patch("src.tick.find_due_row", return_value=None)
     mocker.patch("src.tick.find_stuck_posting", return_value=[_row()])
     record = mocker.patch("src.tick.record_result")
-    code = run_tick(CFG, ENV, notion=MagicMock(), postiz=MagicMock(), now=NOW,
+    code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW,
                     stamp_dir=tmp_path, dry_run=False)
     assert code == 1
     record.assert_called_once()
@@ -104,7 +110,7 @@ def test_fresh_posting_row_not_swept(mocker, tmp_path):
     mocker.patch("src.tick.find_due_row", return_value=None)
     mocker.patch("src.tick.find_stuck_posting", return_value=[row])
     record = mocker.patch("src.tick.record_result")
-    code = run_tick(CFG, ENV, notion=MagicMock(), postiz=MagicMock(), now=NOW,
+    code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW,
                     stamp_dir=tmp_path, dry_run=False)
     assert code == 0
     record.assert_not_called()
@@ -113,11 +119,29 @@ def test_fresh_posting_row_not_swept(mocker, tmp_path):
 def test_notion_outage_prints_crash_line(mocker, tmp_path, capsys):
     mocker.patch("src.tick.find_stuck_posting",
                  side_effect=RuntimeError("notion 503"))
-    code = run_tick(CFG, ENV, notion=MagicMock(), postiz=MagicMock(), now=NOW,
+    code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW,
                     stamp_dir=tmp_path, dry_run=False)
     assert code == 1
     assert "TICK CRASHED" in capsys.readouterr().out
     assert not (tmp_path / "last_tick").exists()  # watchdog must fire too
+
+
+def test_unknown_platform_fails_before_marking(mocker, tmp_path, capsys):
+    """A platform in channels.yaml with no poster client: FAILED line + exit 1,
+    but the row is untouched (stays Ready) — no mark_posting, no record_result."""
+    cfg = {"useful-math": {"platforms": {
+        "linkedin": {"slot": "12:00", "tz": "America/New_York", "cadence": "daily"},
+    }}}
+    mocker.patch("src.tick.find_due_row", return_value=_row(platforms=("linkedin",)))
+    mocker.patch("src.tick.find_stuck_posting", return_value=[])
+    mark = mocker.patch("src.tick.mark_posting")
+    record = mocker.patch("src.tick.record_result")
+    code = run_tick(cfg, ENV, notion=MagicMock(), now=NOW,
+                    stamp_dir=tmp_path, dry_run=False)
+    assert code == 1
+    mark.assert_not_called()
+    record.assert_not_called()
+    assert "no poster client" in capsys.readouterr().out
 
 
 def _fake_notion(page):
@@ -163,18 +187,20 @@ def test_same_row_two_platforms_one_tick(mocker, tmp_path):
     page = _row(platforms=("youtube-shorts", "ig-reels"))
     notion = _fake_notion(page)
     mocker.patch("src.tick.download_assets", return_value=["/tmp/hua.mp4"])
-    postiz = MagicMock()
-    postiz.integration_ids.return_value = {"youtube": "int-yt", "instagram": "int-ig"}
-    postiz.upload.return_value = {"id": "m1", "path": "/up/hua.mp4"}
-    postiz.create_post.return_value = {"id": "post-1"}
+    mocker.patch.dict(os.environ, POSTER_ENV)
+    yt = mocker.patch("src.tick.yt_post",
+                      return_value="https://youtube.com/shorts/vid1")
+    ig = mocker.patch("src.tick.ig_post",
+                      return_value="https://www.instagram.com/reel/AB/")
 
-    code = run_tick(cfg, ENV, notion=notion, postiz=postiz, now=NOW,
+    code = run_tick(cfg, ENV, notion=notion, now=NOW,
                     stamp_dir=tmp_path, dry_run=False)
 
     assert code == 0
-    assert postiz.create_post.call_count == 2
+    yt.assert_called_once()
+    ig.assert_called_once()
     assert page["properties"]["Status"]["select"]["name"] == "Posted"
     links = "".join(t.get("plain_text", "")
                     for t in page["properties"]["Posted Links"]["rich_text"])
-    assert "youtube-shorts:" in links
-    assert "ig-reels:" in links
+    assert "youtube-shorts: https://youtube.com/shorts/vid1" in links
+    assert "ig-reels: https://www.instagram.com/reel/AB/" in links

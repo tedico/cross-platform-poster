@@ -1,5 +1,6 @@
-"""Download a queue row's Asset URL(s) to local temp files so Postiz can
-ingest them. um-assets style stores take an optional X-Token header."""
+"""Download a queue row's Asset URL(s) to local temp files so a platform
+client can upload them. um-assets style stores take an optional X-Token
+header."""
 from pathlib import Path
 from urllib.parse import urlparse
 

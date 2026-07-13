@@ -1,7 +1,7 @@
 """The scheduler tick. Deliberately dumb: config says what's due, Notion holds
-all state, Postiz does all platform work. Run by a Zo automation every 15 min;
-a non-zero exit + printed summary is the SMS trigger. --dry-run logs what WOULD
-post and touches nothing."""
+all state, the platform clients do all platform work. Run by a Zo automation
+every 15 min; a non-zero exit + printed summary is the SMS trigger. --dry-run
+logs what WOULD post and touches nothing."""
 import argparse
 import os
 import sys
@@ -14,24 +14,42 @@ from notion_client import Client
 
 from src.assets import download_assets
 from src.config_loader import load_channels
-from src.postiz_client import (
-    PLATFORM_IDENTIFIER, PostizClient, PostizError, build_settings,
-)
+from src.instagram_client import post as ig_post
 from src.queue_client import (
     find_due_row, find_stuck_posting, mark_posting, record_result, row_fields,
 )
 from src.slots import due_slots
+from src.youtube_client import post as yt_post
 
 STAMP_DIR = Path.home() / ".cross-platform-poster"
 STUCK_AGE = timedelta(hours=1)  # a Posting row younger than this may be a live tick
 
 
-def _publish(notion, postiz, page, platform, dry_run) -> str:
+def _post_youtube(fields, tmp):
+    paths = download_assets(fields["asset_urls"], tmp,
+                            token=os.environ.get("ASSET_STORE_TOKEN"))
+    return yt_post(paths[0], fields["title"], fields["caption"],
+                   client_id=os.environ["YT_CLIENT_ID"],
+                   client_secret=os.environ["YT_CLIENT_SECRET"],
+                   refresh_token=os.environ["YT_REFRESH_TOKEN"])
+
+
+def _post_instagram(fields, tmp):
+    # IG fetches the video itself — no download; asset URL must be public.
+    return ig_post(fields["asset_urls"][0], fields["caption"],
+                   ig_user_id=os.environ["IG_USER_ID"],
+                   access_token=os.environ["IG_ACCESS_TOKEN"])
+
+
+PLATFORM_POSTERS = {"youtube-shorts": _post_youtube, "ig-reels": _post_instagram}
+
+
+def _publish(notion, page, platform, dry_run) -> str:
     """Publish one row to one platform. Returns the summary line."""
-    if platform not in PLATFORM_IDENTIFIER:
+    if platform not in PLATFORM_POSTERS:
         # Row stays Ready; the FAILED line SMSes every tick until config is fixed.
-        raise PostizError(f"platform '{platform}' is in channels.yaml "
-                          f"but not supported by the postiz client")
+        raise ValueError(f"platform '{platform}' is in channels.yaml "
+                         f"but has no poster client")
     fields = row_fields(page)
     if dry_run:
         return (f"DRY-RUN would post '{fields['title']}' -> {platform} "
@@ -39,25 +57,15 @@ def _publish(notion, postiz, page, platform, dry_run) -> str:
     mark_posting(notion, page)
     try:
         with tempfile.TemporaryDirectory() as tmp:
-            paths = download_assets(fields["asset_urls"], tmp,
-                                    token=os.environ.get("ASSET_STORE_TOKEN"))
-            media = [postiz.upload(p) for p in paths]
-            integration = postiz.integration_ids()[PLATFORM_IDENTIFIER[platform]]
-            result = postiz.create_post(
-                integration_id=integration,
-                content=fields["caption"],
-                media_ids=[{"id": m["id"], "path": m.get("path", "")} for m in media],
-                settings=build_settings(platform, title=fields["title"]),
-            )
+            url = PLATFORM_POSTERS[platform](fields, tmp)
     except Exception as e:  # noqa: BLE001 — any failure must stamp the row, not crash the tick
         record_result(notion, page, platform, error=str(e)[:500])
         raise
-    url = f"postiz:{result.get('id', 'unknown')}"  # permalink backfilled when Postiz exposes it
     record_result(notion, page, platform, url=url)
     return f"POSTED '{fields['title']}' -> {platform} ({url})"
 
 
-def run_tick(cfg, env, notion, postiz, now, stamp_dir=STAMP_DIR, dry_run=False) -> int:
+def run_tick(cfg, env, notion, now, stamp_dir=STAMP_DIR, dry_run=False) -> int:
     stamp_dir = Path(stamp_dir)
     stamp_dir.mkdir(parents=True, exist_ok=True)
     failures, lines = [], []
@@ -89,7 +97,7 @@ def run_tick(cfg, env, notion, postiz, now, stamp_dir=STAMP_DIR, dry_run=False) 
             if page is None:
                 continue  # empty queue: silent skip by design
             try:
-                lines.append(_publish(notion, postiz, page, platform, dry_run))
+                lines.append(_publish(notion, page, platform, dry_run))
             except Exception as e:  # noqa: BLE001
                 failures.append(f"FAILED {project}->{platform}: {e}")
     except Exception as e:  # noqa: BLE001 — SMS contract: always print, always exit 1
@@ -118,8 +126,7 @@ def main():
         "project_names": {"useful-math": "Useful Math"},
     }
     notion = Client(auth=os.environ["NOTION_TOKEN"])
-    postiz = PostizClient(os.environ["POSTIZ_URL"], os.environ["POSTIZ_API_KEY"])
-    sys.exit(run_tick(cfg, env, notion, postiz,
+    sys.exit(run_tick(cfg, env, notion,
                       now=datetime.now(timezone.utc), dry_run=args.dry_run))
 
 
