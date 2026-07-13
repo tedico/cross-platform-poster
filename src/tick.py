@@ -26,7 +26,7 @@ STUCK_AGE = timedelta(hours=1)  # a Posting row younger than this may be a live 
 
 
 def _post_youtube(fields, tmp):
-    paths = download_assets(fields["asset_urls"], tmp,
+    paths = download_assets(fields["asset_urls"][:1], tmp,
                             token=os.environ.get("ASSET_STORE_TOKEN"))
     return yt_post(paths[0], fields["title"], fields["caption"],
                    client_id=os.environ["YT_CLIENT_ID"],
@@ -42,6 +42,10 @@ def _post_instagram(fields, tmp):
 
 
 PLATFORM_POSTERS = {"youtube-shorts": _post_youtube, "ig-reels": _post_instagram}
+REQUIRED_ENV = {
+    "youtube-shorts": ("YT_CLIENT_ID", "YT_CLIENT_SECRET", "YT_REFRESH_TOKEN"),
+    "ig-reels": ("IG_USER_ID", "IG_ACCESS_TOKEN"),
+}
 
 
 def _publish(notion, page, platform, dry_run) -> str:
@@ -54,6 +58,13 @@ def _publish(notion, page, platform, dry_run) -> str:
     if dry_run:
         return (f"DRY-RUN would post '{fields['title']}' -> {platform} "
                 f"({len(fields['asset_urls'])} asset(s))")
+    # GH Actions maps an unset secret to an EMPTY string, so os.environ[...]
+    # would succeed and fail later cryptically — and burn the queue row.
+    missing = [k for k in REQUIRED_ENV[platform] if not os.environ.get(k)]
+    if missing:
+        raise ValueError(
+            f"{platform}: missing or empty env secret(s): {', '.join(missing)} "
+            "(row left Ready; set the GitHub repo secrets)")
     mark_posting(notion, page)
     try:
         with tempfile.TemporaryDirectory() as tmp:

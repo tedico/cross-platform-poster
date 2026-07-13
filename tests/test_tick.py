@@ -116,6 +116,25 @@ def test_fresh_posting_row_not_swept(mocker, tmp_path):
     record.assert_not_called()
 
 
+def test_missing_env_secret_fails_before_marking(mocker, tmp_path, capsys):
+    """GH Actions maps an unset secret to an empty string; either way the tick
+    must fail BEFORE mark_posting so the row stays Ready."""
+    mocker.patch("src.tick.find_due_row", return_value=_row())
+    mocker.patch("src.tick.find_stuck_posting", return_value=[])
+    mocker.patch("src.tick.download_assets", return_value=["/tmp/hua.mp4"])
+    mocker.patch.dict(os.environ, {}, clear=True)  # no YT_* secrets at all
+    mark = mocker.patch("src.tick.mark_posting")
+    record = mocker.patch("src.tick.record_result")
+    yt = mocker.patch("src.tick.yt_post")
+    code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW,
+                    stamp_dir=tmp_path, dry_run=False)
+    assert code == 1
+    mark.assert_not_called()
+    record.assert_not_called()
+    yt.assert_not_called()
+    assert "missing or empty env secret" in capsys.readouterr().out
+
+
 def test_notion_outage_prints_crash_line(mocker, tmp_path, capsys):
     mocker.patch("src.tick.find_stuck_posting",
                  side_effect=RuntimeError("notion 503"))
