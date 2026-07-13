@@ -1600,3 +1600,535 @@ Not detailed here by design (blocked on external credentials): first supervised 
 - **Spec coverage:** schema ✓ (T4/T10), slots ✓ (T2/T3), scheduler flow incl. stuck-Posting + partial-platform retry ✓ (T4/T7), adapter + gate + dedup ✓ (T8), Postiz appliance ✓ (T5/T9), error handling/SMS-via-Zo ✓ (T7/T11), watchdog + heartbeat ✓ (T8/T11), dry-run + supervised rollout ✓ (T13/T14), README socket contract + 3B naming ✓ (T12), Human items ✓ (T1/T12), public-repo hygiene ✓ (secrets only in gitignored .env / Zo env).
 - **Known deliberate deferral:** Postiz `/posts` and settings payloads are marked verify-against-live-docs (T9 S4) rather than asserted — isolated in `build_settings`/`create_post` so corrections are one commit.
 - **Out of this plan:** the useful-math watcher adapter (own plan, own repo, blocked on 3B folder), real permalink extraction from Postiz responses (T14 checks what the API returns).
+
+---
+
+# PIVOT ADDENDUM (2026-07-13) — direct platform APIs on GitHub Actions
+
+**Why:** Zo cannot run containers (kernel blocks namespaces — verified empirically) and
+current Postiz additionally requires a Temporal stack. Ted chose direct platform APIs at
+$0/mo over a ~$5/mo VPS. See the spec's Pivot section for the full decision record.
+
+**Supersedes:** Task 9 Steps 3–4 (Postiz bring-up — never executed), Task 11 (Zo
+automations for the tick), and the Postiz client itself. Tasks 1–8 (executed, reviewed)
+and Task 9 Steps 1–2 (compose file, committed) are historical record; the compose file is
+REMOVED in Task 9C below. Task 10 (setup_notion) is unchanged. Tasks 12–13 proceed with
+the amendments noted at the end.
+
+**New execution order:** 9A (YouTube client) → 9B (Instagram client) → 9C (rewire tick,
+remove Postiz artifacts) → 10 (setup_notion, unchanged) → 11′ (GH workflows + watchdog
+rework + Zo automation) → 12 (README, amended) → 13 (E2E + PR, amended).
+
+**requirements.txt additions (Task 9A):** `google-api-python-client>=2.100.0`,
+`google-auth>=2.23.0`, `google-auth-oauthlib>=1.1.0` (oauthlib is only for the one-time
+local token-mint script).
+
+---
+
+### Task 9A: YouTube client (`src/youtube_client.py`) + token-mint script
+
+**Files:**
+- Create: `src/youtube_client.py`, `scripts/get_youtube_token.py`
+- Modify: `requirements.txt`
+- Test: `tests/test_youtube_client.py`
+
+- [ ] **Step 1: Write the failing tests** — `tests/test_youtube_client.py`:
+
+```python
+from unittest.mock import MagicMock
+
+from src.youtube_client import post
+
+
+def _wire(mocker):
+    service = MagicMock()
+    request = MagicMock()
+    request.next_chunk.side_effect = [(None, None), (None, {"id": "vid123"})]
+    service.videos.return_value.insert.return_value = request
+    mocker.patch("src.youtube_client._service", return_value=service)
+    mocker.patch("src.youtube_client.MediaFileUpload")
+    return service
+
+
+def test_post_returns_shorts_url(mocker, tmp_path):
+    _wire(mocker)
+    f = tmp_path / "hua.mp4"; f.write_bytes(b"x")
+    url = post(f, title="Hua Luogeng", caption="cap",
+               client_id="ci", client_secret="cs", refresh_token="rt")
+    assert url == "https://youtube.com/shorts/vid123"
+
+
+def test_post_sends_title_description_public(mocker, tmp_path):
+    service = _wire(mocker)
+    f = tmp_path / "hua.mp4"; f.write_bytes(b"x")
+    post(f, title="T" * 150, caption="the caption",
+         client_id="ci", client_secret="cs", refresh_token="rt")
+    body = service.videos.return_value.insert.call_args.kwargs["body"]
+    assert len(body["snippet"]["title"]) == 100          # truncated
+    assert body["snippet"]["description"] == "the caption"
+    assert body["status"]["privacyStatus"] == "public"
+    assert body["status"]["selfDeclaredMadeForKids"] is False
+```
+
+- [ ] **Step 2: Run, verify FAIL** (ModuleNotFoundError), after `.venv/bin/pip install`
+      of the three new requirements.
+
+- [ ] **Step 3: Implement `src/youtube_client.py`:**
+
+```python
+"""Upload a video to YouTube via the Data API v3 (resumable). OAuth2
+refresh-token flow — no browser, no token files; credentials come from the
+caller (GH Actions secrets). The OAuth app must be in PRODUCTION status or
+Google expires the refresh token after 7 days. Vertical <3 min video is
+auto-classified as a Short."""
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+
+CATEGORY_EDUCATION = "27"
+
+
+def _service(client_id: str, client_secret: str, refresh_token: str):
+    creds = Credentials(
+        None, refresh_token=refresh_token,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=client_id, client_secret=client_secret,
+    )
+    return build("youtube", "v3", credentials=creds, cache_discovery=False)
+
+
+def post(file_path, title: str, caption: str, *, client_id: str,
+         client_secret: str, refresh_token: str) -> str:
+    """Upload file_path, return the Shorts permalink."""
+    body = {
+        "snippet": {"title": title[:100], "description": caption[:5000],
+                    "categoryId": CATEGORY_EDUCATION},
+        "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False},
+    }
+    media = MediaFileUpload(str(file_path), mimetype="video/mp4",
+                            resumable=True, chunksize=8 * 1024 * 1024)
+    request = _service(client_id, client_secret, refresh_token).videos().insert(
+        part="snippet,status", body=body, media_body=media)
+    response = None
+    while response is None:
+        _, response = request.next_chunk()
+    return f"https://youtube.com/shorts/{response['id']}"
+```
+
+- [ ] **Step 4: Write `scripts/get_youtube_token.py`** (Ted runs ONCE locally to mint the
+      refresh token; not imported by anything):
+
+```python
+"""One-time, LOCAL: mint the YouTube refresh token. Usage:
+    .venv/bin/python scripts/get_youtube_token.py <client_id> <client_secret>
+Opens a browser for consent on the @Useful_Math Google account, prints the
+refresh token to paste into the YT_REFRESH_TOKEN GitHub secret. Requires the
+OAuth app's redirect config to allow localhost (Desktop-app credentials do)."""
+import sys
+
+from google_auth_oauthlib.flow import InstalledAppFlow
+
+SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+
+client_id, client_secret = sys.argv[1], sys.argv[2]
+flow = InstalledAppFlow.from_client_config(
+    {"installed": {"client_id": client_id, "client_secret": client_secret,
+                   "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                   "token_uri": "https://oauth2.googleapis.com/token"}},
+    scopes=SCOPES)
+creds = flow.run_local_server(port=0, access_type="offline", prompt="consent")
+print("\nYT_REFRESH_TOKEN =", creds.refresh_token)
+```
+
+- [ ] **Step 5: Add the three google deps to requirements.txt, run full suite** (expect
+      53 + 2 = 55 passed; the 6 postiz tests still exist at this point).
+
+- [ ] **Step 6: Commit** — `feat: YouTube client — resumable upload via refresh-token flow + one-time token-mint script` (+ trailer).
+
+---
+
+### Task 9B: Instagram client (`src/instagram_client.py`)
+
+**Files:**
+- Create: `src/instagram_client.py`
+- Test: `tests/test_instagram_client.py`
+
+IG Graph API Reels flow: create container (media_type=REELS, video_url, caption) → poll
+`status_code` until FINISHED (bounded) → media_publish → fetch permalink. IG downloads
+the video itself from `video_url` — the asset URL must be publicly fetchable. The access
+token travels in request params; NEVER let it leak into exception text (it would land in
+the Notion Error field) — sanitize.
+
+- [ ] **Step 1: Write the failing tests** — `tests/test_instagram_client.py`:
+
+```python
+import pytest
+
+from src.instagram_client import InstagramError, post
+
+
+def _resp(mocker, payload, status=200):
+    r = mocker.MagicMock(status_code=status)
+    r.json.return_value = payload
+    r.text = str(payload)
+    return r
+
+
+def test_post_happy_path_returns_permalink(mocker):
+    posts = [_resp(mocker, {"id": "c1"}), _resp(mocker, {"id": "m1"})]
+    gets = [_resp(mocker, {"status_code": "FINISHED"}),
+            _resp(mocker, {"permalink": "https://www.instagram.com/reel/AB12/"})]
+    mocker.patch("src.instagram_client.requests.post", side_effect=posts)
+    mocker.patch("src.instagram_client.requests.get", side_effect=gets)
+    mocker.patch("src.instagram_client.time.sleep")
+    url = post("https://a/hua.mp4", "cap", ig_user_id="u1", access_token="tok")
+    assert url == "https://www.instagram.com/reel/AB12/"
+
+
+def test_post_container_error_raises(mocker):
+    mocker.patch("src.instagram_client.requests.post",
+                 side_effect=[_resp(mocker, {"id": "c1"})])
+    mocker.patch("src.instagram_client.requests.get",
+                 side_effect=[_resp(mocker, {"status_code": "ERROR"})])
+    mocker.patch("src.instagram_client.time.sleep")
+    with pytest.raises(InstagramError, match="ERROR"):
+        post("https://a/x.mp4", "c", ig_user_id="u1", access_token="tok")
+
+
+def test_post_timeout_raises_after_max_polls(mocker):
+    mocker.patch("src.instagram_client.requests.post",
+                 side_effect=[_resp(mocker, {"id": "c1"})])
+    mocker.patch("src.instagram_client.requests.get",
+                 return_value=_resp(mocker, {"status_code": "IN_PROGRESS"}))
+    mocker.patch("src.instagram_client.time.sleep")
+    with pytest.raises(InstagramError, match="not ready"):
+        post("https://a/x.mp4", "c", ig_user_id="u1", access_token="tok",
+             max_polls=3)
+
+
+def test_token_never_in_error_text(mocker):
+    bad = _resp(mocker, {"error": {"message": "bad request"}}, status=400)
+    bad.text = "boom access_token=SECRETTOK details"
+    mocker.patch("src.instagram_client.requests.post", return_value=bad)
+    with pytest.raises(InstagramError) as exc:
+        post("https://a/x.mp4", "c", ig_user_id="u1", access_token="SECRETTOK")
+    assert "SECRETTOK" not in str(exc.value)
+```
+
+- [ ] **Step 2: Run, verify FAIL.**
+
+- [ ] **Step 3: Implement `src/instagram_client.py`:**
+
+```python
+"""Publish a Reel via the Instagram Graph API. IG fetches the video itself
+from a PUBLIC video_url (no local file). Long-lived token (~60 days) arrives
+from the caller; a scheduled workflow rotates it. The token travels in
+request params — every error path sanitizes it out of messages, since tick
+stamps exception text into the Notion Error field."""
+import time
+
+import requests
+
+GRAPH = "https://graph.facebook.com/v21.0"
+TIMEOUT = (10, 60)
+
+
+class InstagramError(Exception):
+    pass
+
+
+def _json_or_raise(r, label: str, token: str) -> dict:
+    if r.status_code != 200:
+        raise InstagramError(
+            f"{label} -> HTTP {r.status_code}: "
+            + r.text[:300].replace(token, "***"))
+    try:
+        return r.json()
+    except ValueError:
+        raise InstagramError(
+            f"{label} -> non-JSON response: "
+            + r.text[:300].replace(token, "***")) from None
+
+
+def post(video_url: str, caption: str, *, ig_user_id: str, access_token: str,
+         poll_seconds: int = 15, max_polls: int = 40) -> str:
+    """Create+publish a Reel from a public video URL; return the permalink."""
+    container = _json_or_raise(requests.post(
+        f"{GRAPH}/{ig_user_id}/media",
+        data={"media_type": "REELS", "video_url": video_url,
+              "caption": caption[:2200], "access_token": access_token},
+        timeout=TIMEOUT), "create container", access_token)["id"]
+
+    for _ in range(max_polls):
+        status = _json_or_raise(requests.get(
+            f"{GRAPH}/{container}",
+            params={"fields": "status_code", "access_token": access_token},
+            timeout=TIMEOUT), "container status", access_token)["status_code"]
+        if status == "FINISHED":
+            break
+        if status == "ERROR":
+            raise InstagramError(f"container {container} -> status ERROR "
+                                 "(IG could not process the video_url)")
+        time.sleep(poll_seconds)
+    else:
+        raise InstagramError(
+            f"container {container} not ready after {max_polls} polls")
+
+    media = _json_or_raise(requests.post(
+        f"{GRAPH}/{ig_user_id}/media_publish",
+        data={"creation_id": container, "access_token": access_token},
+        timeout=TIMEOUT), "media_publish", access_token)["id"]
+
+    perm = _json_or_raise(requests.get(
+        f"{GRAPH}/{media}",
+        params={"fields": "permalink", "access_token": access_token},
+        timeout=TIMEOUT), "fetch permalink", access_token)
+    return perm.get("permalink") or f"ig:{media}"
+```
+
+- [ ] **Step 4: Run, verify 4 passed; full suite expect 59.**
+
+- [ ] **Step 5: Commit** — `feat: Instagram client — Reels container/poll/publish flow, token-sanitized errors` (+ trailer).
+
+---
+
+### Task 9C: Rewire tick to the platform registry; remove Postiz artifacts
+
+**Files:**
+- Modify: `src/tick.py`, `tests/test_tick.py`, `.env.example`
+- Delete: `src/postiz_client.py`, `tests/test_postiz_client.py`, `deploy/postiz/` (compose + .env.example)
+
+- [ ] **Step 1: Rewire `src/tick.py`.** Replace the postiz imports and `_publish` body:
+
+```python
+from src.instagram_client import post as ig_post
+from src.youtube_client import post as yt_post
+
+
+def _post_youtube(fields, tmp):
+    paths = download_assets(fields["asset_urls"], tmp,
+                            token=os.environ.get("ASSET_STORE_TOKEN"))
+    return yt_post(paths[0], fields["title"], fields["caption"],
+                   client_id=os.environ["YT_CLIENT_ID"],
+                   client_secret=os.environ["YT_CLIENT_SECRET"],
+                   refresh_token=os.environ["YT_REFRESH_TOKEN"])
+
+
+def _post_instagram(fields, tmp):
+    # IG fetches the video itself — no download; asset URL must be public.
+    return ig_post(fields["asset_urls"][0], fields["caption"],
+                   ig_user_id=os.environ["IG_USER_ID"],
+                   access_token=os.environ["IG_ACCESS_TOKEN"])
+
+
+PLATFORM_POSTERS = {"youtube-shorts": _post_youtube, "ig-reels": _post_instagram}
+```
+
+`_publish` becomes: unknown-platform check against `PLATFORM_POSTERS` (same fail-fast
+semantics as before, ValueError is fine now that PostizError is gone); dry-run early
+return unchanged; then `mark_posting` → `with tempfile.TemporaryDirectory() as tmp: url =
+PLATFORM_POSTERS[platform](fields, tmp)` inside the same try/except-stamp-reraise;
+`record_result(url=url)` — REAL permalinks now, no `postiz:` placeholder. `run_tick` and
+`main()` lose the postiz parameter entirely (update signature and all tests; `main()` no
+longer constructs a PostizClient and drops POSTIZ_URL/POSTIZ_API_KEY).
+
+- [ ] **Step 2: Update `tests/test_tick.py`:** drop the postiz mock from `_wire` (patch
+`src.tick.yt_post` / `src.tick.ig_post` instead, returning permalink strings), drop the
+`postiz=` arg everywhere, keep every behavioral assertion (happy path now asserts
+`record_result` got the permalink; dry-run asserts neither poster was called; the
+same-row-two-platforms integration test patches both posters). Add
+`test_unknown_platform_fails_before_marking` (platform "linkedin" in cfg → exit 1,
+mark_posting not called).
+
+- [ ] **Step 3: Update `.env.example`:** remove POSTIZ_URL/POSTIZ_API_KEY; add
+`YT_CLIENT_ID`, `YT_CLIENT_SECRET`, `YT_REFRESH_TOKEN`, `IG_USER_ID`, `IG_ACCESS_TOKEN`
+(comment: set as GitHub Actions secrets; NOTION_TOKEN also in Zo env for the watchdog).
+
+- [ ] **Step 4: `git rm src/postiz_client.py tests/test_postiz_client.py deploy/postiz -r`**
+
+- [ ] **Step 5: Run full suite** (expect 59 − 6 postiz + 1 new = 54 passed).
+
+- [ ] **Step 6: Commit** — `refactor: tick posts via direct platform clients; drop Postiz (Zo can't run containers; see spec Pivot)` (+ trailer).
+
+---
+
+### Task 11′: GitHub Actions workflows + watchdog rework + Zo automation
+
+**Files:**
+- Create: `.github/workflows/tick.yml`, `.github/workflows/refresh-ig-token.yml`, `scripts/refresh_ig_token.py`
+- Modify: `src/watchdog.py`, `tests/test_watchdog.py`, `src/tick.py` (remove stamp logic), `tests/test_tick.py`
+
+- [ ] **Step 1: `.github/workflows/tick.yml`:**
+
+```yaml
+# The poster's heartbeat. Failure alerting is the Zo watchdog's job (it reads
+# this workflow's run status via the GitHub API) — SMS logic stays out of the
+# Action, same division as useful-math's producer/watchdog pair.
+name: Post Queue Tick
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (log what would post, touch nothing)'
+        type: boolean
+        default: false
+concurrency:
+  group: tick
+  cancel-in-progress: false
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Run tick
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          POST_QUEUE_DB_ID: ${{ secrets.POST_QUEUE_DB_ID }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          ASSET_STORE_TOKEN: ${{ secrets.ASSET_STORE_TOKEN }}
+        run: python -m src.tick ${{ inputs.dry_run && '--dry-run' || '' }}
+```
+
+- [ ] **Step 2: `scripts/refresh_ig_token.py`** (adapted from useful-math's
+`refresh_instagram_token.py` — read that file first and reuse its endpoint usage):
+
+```python
+"""Refresh the IG long-lived token (60-day expiry) and print the new one.
+Run monthly by refresh-ig-token.yml, which stores it back into the repo
+secret via ADMIN_PAT. Exits non-zero on any failure (watchdog notices the
+failed workflow run)."""
+import os
+import sys
+
+import requests
+
+r = requests.get("https://graph.facebook.com/v21.0/oauth/access_token",
+                 params={"grant_type": "fb_exchange_token",
+                         "client_id": os.environ["FB_APP_ID"],
+                         "client_secret": os.environ["FB_APP_SECRET"],
+                         "fb_exchange_token": os.environ["IG_ACCESS_TOKEN"]},
+                 timeout=(10, 30))
+if r.status_code != 200:
+    tok = os.environ["IG_ACCESS_TOKEN"]
+    sys.exit(f"refresh failed: HTTP {r.status_code}: "
+             + r.text[:300].replace(tok, "***"))
+print(r.json()["access_token"])
+```
+
+- [ ] **Step 3: `.github/workflows/refresh-ig-token.yml`:**
+
+```yaml
+name: Refresh IG Token
+on:
+  schedule:
+    - cron: '0 9 5 * *'   # 5th of each month — well inside the 60-day window
+  workflow_dispatch: {}
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests
+      - name: Refresh and rotate the secret
+        env:
+          FB_APP_ID: ${{ secrets.FB_APP_ID }}
+          FB_APP_SECRET: ${{ secrets.FB_APP_SECRET }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          GH_TOKEN: ${{ secrets.ADMIN_PAT }}
+        run: |
+          NEW_TOKEN=$(python scripts/refresh_ig_token.py)
+          gh secret set IG_ACCESS_TOKEN --body "$NEW_TOKEN" --repo ${{ github.repository }}
+```
+
+- [ ] **Step 4: Rework `src/watchdog.py`.** Replace the stamp-file freshness check with a
+GitHub API check (public repo — no token needed); keep the stuck-rows check (unchanged)
+and rework the heartbeat gate for hourly runs:
+
+```python
+GITHUB_REPO = "tedico/cross-platform-poster"
+TICK_WORKFLOW = "tick.yml"
+NO_RUN_ALARM = 45 * 60      # three missed 15-min ticks
+FAILURE_WINDOW = 60 * 60    # hourly watchdog: alert once per failed run
+
+
+def tick_run_problems(now, repo=GITHUB_REPO, workflow=TICK_WORKFLOW) -> list:
+    """Freshness + failure problems from the workflow's recent runs."""
+    r = requests.get(
+        f"https://api.github.com/repos/{repo}/actions/workflows/{workflow}/runs",
+        params={"per_page": 20}, timeout=(10, 30))
+    if r.status_code != 200:
+        return [f"GitHub API -> HTTP {r.status_code} (cannot check tick runs)"]
+    runs = r.json().get("workflow_runs", [])
+    problems = []
+    completed = [x for x in runs if x["status"] == "completed"]
+    if not completed:
+        problems.append("tick workflow has no completed runs")
+    else:
+        newest = datetime.fromisoformat(
+            completed[0]["updated_at"].replace("Z", "+00:00"))
+        if (now - newest).total_seconds() > NO_RUN_ALARM:
+            problems.append(
+                f"no completed tick run in {int((now - newest).total_seconds() // 60)} min")
+    recent_failures = [
+        x for x in completed
+        if x["conclusion"] not in ("success", "skipped", "cancelled")
+        and (now - datetime.fromisoformat(
+            x["updated_at"].replace("Z", "+00:00"))).total_seconds() < FAILURE_WINDOW]
+    if recent_failures:
+        problems.append(
+            f"{len(recent_failures)} failed tick run(s) in the last hour: "
+            + recent_failures[0]["html_url"])
+    return problems
+```
+
+`check(notion, db_id, now=None)` becomes: `problems = tick_run_problems(now) +
+<stuck-rows check as-is>`; heartbeat fires only when `now.day == 1` AND the run is in the
+6 AM ET hour (`now.astimezone(ZoneInfo("America/New_York")).hour == 6`) — the watchdog
+now runs hourly and must not heartbeat 24×. Drop the stamp/STAMP_DIR import and stamp
+tests; also remove the stamp logic from `src/tick.py` (STAMP_DIR, stamp_dir param, the
+write) and its two test assertions — GH API is now the liveness source.
+
+- [ ] **Step 5: Update tests.** test_watchdog.py: mock `requests.get` for
+tick_run_problems (fresh successful run → healthy; 2h-old newest run → "no completed
+tick run"; failed run 10 min ago → "failed tick run"; GitHub API 500 → problem line);
+heartbeat test pins day==1 + 6 AM ET + healthy → (1, heartbeat); day==1 at noon ET →
+(0, healthy). Keep stuck-row tests as-is. test_tick.py: remove stamp assertions.
+
+- [ ] **Step 6: Run full suite; commit** — `feat: GH Actions tick + monthly IG token rotation; watchdog reads workflow runs via GitHub API (stamp file retired)` (+ trailer).
+
+- [ ] **Step 7 (live, coordinator):** Zo automation "cross-platform-poster watchdog":
+hourly, runs `cd ~/cross-platform-poster && .venv/bin/python -m src.watchdog` (repo
+cloned on Zo, venv + requirements installed, NOTION_TOKEN + POST_QUEUE_DB_ID in
+~/cross-platform-poster/.env); instruction: SMS Ted the printed message iff exit
+non-zero. NOTE: workflows only run on the default branch — the tick cron goes live when
+the PR merges to main; until then use workflow_dispatch on the branch for testing.
+
+---
+
+### Amendments to Tasks 12–13
+
+- **Task 12 (README):** env-var table now lists the GH secrets (YT_*, IG_*, FB_APP_*,
+  ADMIN_PAT, NOTION_TOKEN, POST_QUEUE_DB_ID, ASSET_STORE_TOKEN); "How it works" describes
+  GH Actions tick + Zo watchdog split; Ted's checklist gains: mint YouTube refresh token
+  via scripts/get_youtube_token.py, set OAuth app to production, create ADMIN_PAT; drop
+  every Postiz mention. Socket contract section unchanged EXCEPT: note asset URLs must be
+  PUBLIC (IG fetches them directly).
+- **Task 13 (E2E + PR):** dry-run via `gh workflow run tick.yml -f dry_run=true --ref
+  v1-build` once secrets exist (or locally as before with a .env). PR body updated for
+  the pivot. Supervised first-post task (14) unchanged in spirit.
+
