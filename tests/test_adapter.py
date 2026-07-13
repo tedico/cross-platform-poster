@@ -2,6 +2,8 @@ import importlib.util
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 spec = importlib.util.spec_from_file_location(
     "post_queue_adapter", Path("adapter/post_queue_adapter.py"))
 adapter = importlib.util.module_from_spec(spec)
@@ -38,3 +40,21 @@ def test_enqueue_dedups_on_existing_asset_url():
                           platforms=["youtube-shorts"], gate="auto")
     assert out is None
     client.pages.create.assert_not_called()
+
+
+def test_enqueue_rejects_empty_platforms():
+    client = MagicMock()
+    with pytest.raises(ValueError):
+        adapter.enqueue(client, "db1", project="X", title="t",
+                        asset_urls=["https://a/hua.mp4"], caption="c",
+                        platforms=[], gate="auto")
+    client.databases.query.assert_not_called()  # guard runs before any API call
+
+
+def test_enqueue_rejects_bad_gate():
+    client = MagicMock()
+    with pytest.raises(ValueError):
+        adapter.enqueue(client, "db1", project="X", title="t",
+                        asset_urls=["https://a/hua.mp4"], caption="c",
+                        platforms=["youtube-shorts"], gate="manual")
+    client.databases.query.assert_not_called()

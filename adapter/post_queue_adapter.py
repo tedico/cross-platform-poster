@@ -14,6 +14,13 @@ Used By: (stamped in the cross-platform-poster README)
 def enqueue(client, db_id: str, *, project: str, title: str, asset_urls: list,
             caption: str, platforms: list, gate: str = "gated"):
     """Create a Post Queue row. Returns the new page, or None if deduped."""
+    if not asset_urls:
+        raise ValueError("enqueue: asset_urls must be a non-empty list")
+    if not platforms:
+        raise ValueError("enqueue: platforms must be a non-empty list "
+                         "(a row with no platforms would never post)")
+    if gate not in ("auto", "gated"):
+        raise ValueError(f"enqueue: gate must be 'auto' or 'gated', got '{gate}'")
     existing = client.databases.query(
         database_id=db_id,
         filter={"property": "Asset URL(s)",

@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from notion_client import Client
 
 from src.queue_client import find_stuck_posting
-from src.tick import STAMP_DIR
+from src.tick import STAMP_DIR, STUCK_AGE
 
 MAX_STAMP_AGE_SECONDS = 45 * 60  # three missed ticks
 
@@ -23,10 +23,20 @@ def check(notion, db_id: str, stamp_dir=STAMP_DIR, now=None) -> tuple:
     if not stamp.exists():
         problems.append("poster tick has NEVER run (no stamp file)")
     else:
-        age = (now - datetime.fromisoformat(stamp.read_text().strip())).total_seconds()
-        if age > MAX_STAMP_AGE_SECONDS:
-            problems.append(f"poster tick stamp is stale ({int(age // 60)} min old)")
-    stuck = find_stuck_posting(notion, db_id)
+        try:
+            age = (now - datetime.fromisoformat(
+                stamp.read_text().strip())).total_seconds()
+            if age > MAX_STAMP_AGE_SECONDS:
+                problems.append(
+                    f"poster tick stamp is stale ({int(age // 60)} min old)")
+        except (ValueError, TypeError):
+            problems.append("poster tick stamp file is unreadable — inspect "
+                            "~/.cross-platform-poster/last_tick")
+    # find_stuck_posting returns ALL Posting rows; caller decides age. A row
+    # younger than STUCK_AGE may be a live tick mid-flight — not a problem.
+    stuck = [p for p in find_stuck_posting(notion, db_id)
+             if now - datetime.fromisoformat(
+                 p["last_edited_time"].replace("Z", "+00:00")) > STUCK_AGE]
     if stuck:
         problems.append(f"{len(stuck)} row(s) stuck in Posting")
     if problems:
