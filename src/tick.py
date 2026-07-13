@@ -1,6 +1,6 @@
 """The scheduler tick. Deliberately dumb: config says what's due, Notion holds
-all state, the platform clients do all platform work. Run by a Zo automation
-every 15 min; a non-zero exit + printed summary is the SMS trigger. --dry-run
+all state, the platform clients do all platform work. Run by a GitHub Actions
+cron every 15 min; a non-zero exit + printed summary is the SMS trigger. --dry-run
 logs what WOULD post and touches nothing."""
 import argparse
 import os

@@ -14,6 +14,8 @@ on:
 concurrency:
   group: tick
   cancel-in-progress: false
+permissions:
+  contents: read
 jobs:
   tick:
     runs-on: ubuntu-latest

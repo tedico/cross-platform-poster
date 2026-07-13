@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
-from src.watchdog import check, tick_run_problems
+from src.watchdog import check, workflow_run_problems
 
 NOW = datetime(2026, 7, 8, 16, 0, tzinfo=timezone.utc)  # not the 1st
 
@@ -19,10 +19,24 @@ def _run(updated_at, status="completed", conclusion="success"):
             "html_url": "https://github.com/tedico/cross-platform-poster/actions/runs/1"}
 
 
-def _healthy_api(mocker, now):
-    return mocker.patch(
-        "src.watchdog.requests.get",
-        return_value=_gh_response([_run(now - timedelta(minutes=5))]))
+def _api(mocker, tick_responses, refresh_runs=None):
+    """Patch requests.get keyed on the workflow in the URL. check() hits two
+    workflows and the retry may re-hit one, so tick_responses is a list
+    consumed in order (last one sticks)."""
+    mocker.patch("src.watchdog.time.sleep")  # retry path must not really wait
+    tick_queue = list(tick_responses)
+
+    def get(url, **_):
+        if "refresh-ig-token.yml" in url:
+            return _gh_response(refresh_runs or [])
+        return tick_queue.pop(0) if len(tick_queue) > 1 else tick_queue[0]
+
+    return mocker.patch("src.watchdog.requests.get", side_effect=get)
+
+
+def _healthy_api(mocker, now, refresh_runs=None):
+    return _api(mocker, [_gh_response([_run(now - timedelta(minutes=5))])],
+                refresh_runs=refresh_runs)
 
 
 def _empty_notion():
@@ -33,34 +47,56 @@ def _empty_notion():
 
 def test_recent_successful_run_healthy(mocker):
     _healthy_api(mocker, NOW)
-    assert tick_run_problems(NOW) == []
+    assert workflow_run_problems(NOW) == []
     code, msg = check(_empty_notion(), "db1", now=NOW)
     assert code == 0
     assert msg == "healthy"
 
 
 def test_no_recent_run_flagged(mocker):
-    mocker.patch("src.watchdog.requests.get",
-                 return_value=_gh_response([_run(NOW - timedelta(hours=2))]))
-    problems = tick_run_problems(NOW)
+    _api(mocker, [_gh_response([_run(NOW - timedelta(hours=2))])])
+    problems = workflow_run_problems(NOW)
     assert any("no completed tick run" in p for p in problems)
 
 
 def test_failed_run_flagged(mocker):
-    mocker.patch("src.watchdog.requests.get", return_value=_gh_response([
+    _api(mocker, [_gh_response([
         _run(NOW - timedelta(minutes=5)),
         _run(NOW - timedelta(minutes=10), conclusion="failure"),
-    ]))
-    problems = tick_run_problems(NOW)
+    ])])
+    problems = workflow_run_problems(NOW)
     assert any("failed tick run" in p for p in problems)
     assert any("https://github.com/" in p for p in problems)
 
 
 def test_github_api_error_flagged(mocker):
-    mocker.patch("src.watchdog.requests.get",
-                 return_value=_gh_response([], status_code=500))
-    problems = tick_run_problems(NOW)
+    _api(mocker, [_gh_response([], status_code=500)])  # 500 on retry too
+    problems = workflow_run_problems(NOW)
     assert any("cannot check tick runs" in p for p in problems)
+
+
+def test_api_blip_retried_before_alarm(mocker):
+    _api(mocker, [_gh_response([], status_code=500),                # blip
+                  _gh_response([_run(NOW - timedelta(minutes=5))])])  # retry OK
+    sleep = mocker.patch("src.watchdog.time.sleep")  # re-patch last so we can assert on it
+    code, msg = check(_empty_notion(), "db1", now=NOW)
+    assert code == 0
+    sleep.assert_called_once()
+
+
+def test_refresh_workflow_failure_flagged(mocker):
+    _healthy_api(mocker, NOW, refresh_runs=[
+        _run(NOW - timedelta(hours=1), conclusion="failure")])
+    code, msg = check(_empty_notion(), "db1", now=NOW)
+    assert code == 1
+    assert "ig-token-refresh" in msg
+
+
+def test_refresh_workflow_no_runs_is_healthy(mocker):
+    # Pre-first-run there ARE no refresh runs — that must not alarm.
+    _healthy_api(mocker, NOW, refresh_runs=[])
+    code, msg = check(_empty_notion(), "db1", now=NOW)
+    assert code == 0
 
 
 def test_fresh_posting_row_not_flagged(mocker):
