@@ -30,5 +30,13 @@ def download_assets(urls: list, dest_dir, token: str = None) -> list:
                     fh.write(chunk)
         if out.stat().st_size == 0:
             raise AssetError(f"GET {url} -> empty body")
+        # A store that answers 200 with an HTML error page would otherwise be
+        # uploaded to YouTube as a "video" — the system's only silent failure.
+        if out.suffix.lower() in (".mp4", ".mov"):
+            with out.open("rb") as fh:
+                head = fh.read(12)
+            if head[4:8] != b"ftyp":
+                raise AssetError(
+                    f"GET {url} -> not an MP4 (no ftyp box; got {head[:8]!r})")
         paths.append(out)
     return paths

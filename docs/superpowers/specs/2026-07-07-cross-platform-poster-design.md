@@ -100,7 +100,7 @@ Components:
    stamping). Unchanged.
 5. **Watchdog** — `src/watchdog.py`, run by a Zo automation hourly (Zo runs Python fine;
    it just can't run containers). Checks: (a) the tick workflow's latest runs via the
-   public GitHub API — any failed run in the last hour, or no completed run in the last
+   public GitHub API — any failed run in the last 90 minutes (drift margin), or no completed run in the last
    45 min → problem; (b) rows stuck in Posting >1h via Notion; (c) on the 1st of the
    month (6–7 AM ET run only), a heartbeat SMS proving the alarm channel works. Non-zero
    exit + printed message = the Zo automation SMSes Ted. SMS logic stays out of the
@@ -173,7 +173,7 @@ via the GitHub API instead.
 ## Error handling & monitoring
 
 - **Row-level failure** → `Failed` + `Error` field (unchanged), surfaced by the hourly
-  watchdog: any failed tick run in the last hour → SMS. Failure-to-SMS latency ≤ ~1h.
+  watchdog: any failed tick run in the last 90 minutes (drift margin) → SMS. Failure-to-SMS latency ≤ ~1h.
 - **Service-level failure** (workflow not running at all) → watchdog's no-recent-run
   check → SMS.
 - **Watchdog-level failure** → monthly heartbeat SMS on the 1st proves the channel.

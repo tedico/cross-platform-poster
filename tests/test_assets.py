@@ -11,17 +11,20 @@ def _resp(mocker, status_code=200, chunks=None):
     return resp
 
 
+MP4_BYTES = b"\x00\x00\x00\x18ftypisom" + b"x" * 8
+
+
 def test_downloads_to_tmp_with_filename(mocker, tmp_path):
-    resp = _resp(mocker, chunks=[b"vid"])
+    resp = _resp(mocker, chunks=[MP4_BYTES])
     mocker.patch("src.assets.requests.get", return_value=resp)
     paths = download_assets(["https://a.example/store/hua-luogeng.mp4"],
                             tmp_path, token="t")
     assert paths[0].name == "hua-luogeng.mp4"
-    assert paths[0].read_bytes() == b"vid"
+    assert paths[0].read_bytes() == MP4_BYTES
 
 
 def test_sends_token_header(mocker, tmp_path):
-    resp = _resp(mocker, chunks=[b"x"])
+    resp = _resp(mocker, chunks=[MP4_BYTES])
     get = mocker.patch("src.assets.requests.get", return_value=resp)
     download_assets(["https://a/x.mp4"], tmp_path, token="sekret")
     assert get.call_args.kwargs["headers"] == {"X-Token": "sekret"}
@@ -46,4 +49,13 @@ def test_empty_body_raises(mocker, tmp_path):
     resp = _resp(mocker, chunks=[])
     mocker.patch("src.assets.requests.get", return_value=resp)
     with pytest.raises(AssetError, match="empty"):
+        download_assets(["https://a/x.mp4"], tmp_path, token=None)
+
+
+def test_html_body_masquerading_as_mp4_raises(mocker, tmp_path):
+    """Asset store answering 200 with an HTML error page must not pass as a
+    video — the ftyp guard closes the system's only silent-failure path."""
+    resp = _resp(mocker, chunks=[b"<html><body>error</body></html>"])
+    mocker.patch("src.assets.requests.get", return_value=resp)
+    with pytest.raises(AssetError, match="ftyp"):
         download_assets(["https://a/x.mp4"], tmp_path, token=None)

@@ -240,13 +240,13 @@ Python — so it's a GH secret only and not in `.env.example`):
 secrets (`REQUIRED_ENV` in `src/tick.py`) and raises if any is missing or EMPTY — GH
 Actions maps an unset secret to an empty string, which would otherwise fail cryptically
 mid-upload and burn the queue row. The row stays `Ready`; the printed `FAILED` line
-SMSes every tick until the secret is set.
+fires once per due slot (daily per platform) until the secret is set.
 
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `FAILED ...: missing or empty env secret(s): ...` every tick | GH repo secret unset (Actions maps unset → empty string) | Set the listed secrets in Settings → Secrets; row is still `Ready`, no action on it needed |
+| `FAILED ...: missing or empty env secret(s): ...` at each due slot | GH repo secret unset (Actions maps unset → empty string) | Set the listed secrets in Settings → Secrets; row is still `Ready`, no action on it needed |
 | Row `Failed`, Error shows an IG message with `***` in it | Token sanitized out of an IG API error: asset URL not publicly fetchable, invalid/expired token, or IG couldn't process the video | Verify the asset URL opens in a private browser window; check token validity; re-Ready after fixing |
 | Row stuck in `Posting` | Tick crashed mid-flight; the >1h sweep will mark it `Failed` with a recovery note | If the post EXISTS on the platform, add `platform: url` to Posted Links BEFORE re-Ready (else it re-posts); if absent, just re-Ready |
 | SMS: `N failed tick run(s) in the last 90 min: <run-url>` | A tick run exited non-zero | Open the run URL, read the last `FAILED`/`TICK CRASHED` line, then match it against the other rows in this table |

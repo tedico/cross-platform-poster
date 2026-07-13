@@ -50,7 +50,8 @@ REQUIRED_ENV = {
 def _publish(notion, page, platform, dry_run) -> str:
     """Publish one row to one platform. Returns the summary line."""
     if platform not in PLATFORM_POSTERS:
-        # Row stays Ready; the FAILED line SMSes every tick until config is fixed.
+        # Row stays Ready; the FAILED line fires once per due slot (daily per
+        # platform) until the config is fixed.
         raise ValueError(f"platform '{platform}' is in channels.yaml "
                          f"but has no poster client")
     fields = row_fields(page)

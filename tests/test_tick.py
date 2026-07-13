@@ -203,3 +203,44 @@ def test_same_row_two_platforms_one_tick(mocker, tmp_path):
                     for t in page["properties"]["Posted Links"]["rich_text"])
     assert "youtube-shorts: https://youtube.com/shorts/vid1" in links
     assert "ig-reels: https://www.instagram.com/reel/AB/" in links
+
+
+def test_partial_failure_preserves_posted_link_and_retries_only_failed(mocker, tmp_path):
+    """The double-post protection as one flow: yt posts, ig fails -> row Failed
+    but the yt link is preserved; Ted re-Readies; the next tick retries ONLY ig
+    (yt link in Posted Links = never re-posted). Real queue_client throughout."""
+    cfg = {"useful-math": {"platforms": {
+        "youtube-shorts": {"slot": "12:00", "tz": "America/New_York", "cadence": "daily"},
+        "ig-reels": {"slot": "12:00", "tz": "America/New_York", "cadence": "daily"},
+    }}}
+    page = _row(platforms=("youtube-shorts", "ig-reels"))
+    notion = _fake_notion(page)
+    mocker.patch("src.tick.download_assets", return_value=["/tmp/hua.mp4"])
+    mocker.patch.dict(os.environ, POSTER_ENV)
+    yt = mocker.patch("src.tick.yt_post",
+                      return_value="https://youtube.com/shorts/vid1")
+    ig = mocker.patch("src.tick.ig_post", side_effect=Exception("ig down"))
+
+    code = run_tick(cfg, ENV, notion=notion, now=NOW, dry_run=False)
+
+    assert code == 1
+    assert page["properties"]["Status"]["select"]["name"] == "Failed"
+    links = "".join(t.get("plain_text", "")
+                    for t in page["properties"]["Posted Links"]["rich_text"])
+    assert "youtube-shorts: https://youtube.com/shorts/vid1" in links
+
+    # Ted's recovery: fix IG, flip the row back to Ready, wait for the next tick.
+    page["properties"]["Status"] = {"select": {"name": "Ready"}}
+    ig.side_effect = None
+    ig.return_value = "https://www.instagram.com/reel/AB/"
+
+    code = run_tick(cfg, ENV, notion=notion, now=NOW, dry_run=False)
+
+    assert code == 0
+    assert page["properties"]["Status"]["select"]["name"] == "Posted"
+    links = "".join(t.get("plain_text", "")
+                    for t in page["properties"]["Posted Links"]["rich_text"])
+    assert "youtube-shorts: https://youtube.com/shorts/vid1" in links
+    assert "ig-reels: https://www.instagram.com/reel/AB/" in links
+    yt.assert_called_once()  # across BOTH ticks — no YT double-post
+    assert ig.call_count == 2
