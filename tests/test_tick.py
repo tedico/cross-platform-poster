@@ -49,8 +49,7 @@ def _wire(mocker, row):
 
 def test_happy_path_posts_and_records(mocker, tmp_path):
     mark, record, yt, ig = _wire(mocker, _row())
-    code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW,
-                    stamp_dir=tmp_path, dry_run=False)
+    code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW, dry_run=False)
     assert code == 0
     mark.assert_called_once()
     yt.assert_called_once()
@@ -60,46 +59,33 @@ def test_happy_path_posts_and_records(mocker, tmp_path):
 def test_empty_queue_is_silent_success(mocker, tmp_path):
     mocker.patch("src.tick.find_due_row", return_value=None)
     mocker.patch("src.tick.find_stuck_posting", return_value=[])
-    code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW,
-                    stamp_dir=tmp_path, dry_run=False)
+    code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW, dry_run=False)
     assert code == 0
 
 
 def test_poster_failure_records_error_and_exits_nonzero(mocker, tmp_path):
     mark, record, yt, ig = _wire(mocker, _row())
     yt.side_effect = Exception("boom")
-    code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW,
-                    stamp_dir=tmp_path, dry_run=False)
+    code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW, dry_run=False)
     assert code == 1
     assert record.call_args.kwargs["error"]
 
 
 def test_dry_run_never_touches_platforms_or_status(mocker, tmp_path):
     mark, record, yt, ig = _wire(mocker, _row())
-    code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW,
-                    stamp_dir=tmp_path, dry_run=True)
+    code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW, dry_run=True)
     assert code == 0
     yt.assert_not_called()
     ig.assert_not_called()
     mark.assert_not_called()
     record.assert_not_called()
-    assert not (tmp_path / "last_tick").exists()  # dry run must not vouch for liveness
-
-
-def test_writes_last_tick_stamp(mocker, tmp_path):
-    mocker.patch("src.tick.find_due_row", return_value=None)
-    mocker.patch("src.tick.find_stuck_posting", return_value=[])
-    run_tick(CFG, ENV, notion=MagicMock(), now=NOW,
-             stamp_dir=tmp_path, dry_run=False)
-    assert (tmp_path / "last_tick").exists()
 
 
 def test_stuck_posting_row_exits_nonzero(mocker, tmp_path):
     mocker.patch("src.tick.find_due_row", return_value=None)
     mocker.patch("src.tick.find_stuck_posting", return_value=[_row()])
     record = mocker.patch("src.tick.record_result")
-    code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW,
-                    stamp_dir=tmp_path, dry_run=False)
+    code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW, dry_run=False)
     assert code == 1
     record.assert_called_once()
 
@@ -110,8 +96,7 @@ def test_fresh_posting_row_not_swept(mocker, tmp_path):
     mocker.patch("src.tick.find_due_row", return_value=None)
     mocker.patch("src.tick.find_stuck_posting", return_value=[row])
     record = mocker.patch("src.tick.record_result")
-    code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW,
-                    stamp_dir=tmp_path, dry_run=False)
+    code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW, dry_run=False)
     assert code == 0
     record.assert_not_called()
 
@@ -126,8 +111,7 @@ def test_missing_env_secret_fails_before_marking(mocker, tmp_path, capsys):
     mark = mocker.patch("src.tick.mark_posting")
     record = mocker.patch("src.tick.record_result")
     yt = mocker.patch("src.tick.yt_post")
-    code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW,
-                    stamp_dir=tmp_path, dry_run=False)
+    code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW, dry_run=False)
     assert code == 1
     mark.assert_not_called()
     record.assert_not_called()
@@ -138,11 +122,9 @@ def test_missing_env_secret_fails_before_marking(mocker, tmp_path, capsys):
 def test_notion_outage_prints_crash_line(mocker, tmp_path, capsys):
     mocker.patch("src.tick.find_stuck_posting",
                  side_effect=RuntimeError("notion 503"))
-    code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW,
-                    stamp_dir=tmp_path, dry_run=False)
+    code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW, dry_run=False)
     assert code == 1
     assert "TICK CRASHED" in capsys.readouterr().out
-    assert not (tmp_path / "last_tick").exists()  # watchdog must fire too
 
 
 def test_unknown_platform_fails_before_marking(mocker, tmp_path, capsys):
@@ -155,8 +137,7 @@ def test_unknown_platform_fails_before_marking(mocker, tmp_path, capsys):
     mocker.patch("src.tick.find_stuck_posting", return_value=[])
     mark = mocker.patch("src.tick.mark_posting")
     record = mocker.patch("src.tick.record_result")
-    code = run_tick(cfg, ENV, notion=MagicMock(), now=NOW,
-                    stamp_dir=tmp_path, dry_run=False)
+    code = run_tick(cfg, ENV, notion=MagicMock(), now=NOW, dry_run=False)
     assert code == 1
     mark.assert_not_called()
     record.assert_not_called()
@@ -212,8 +193,7 @@ def test_same_row_two_platforms_one_tick(mocker, tmp_path):
     ig = mocker.patch("src.tick.ig_post",
                       return_value="https://www.instagram.com/reel/AB/")
 
-    code = run_tick(cfg, ENV, notion=notion, now=NOW,
-                    stamp_dir=tmp_path, dry_run=False)
+    code = run_tick(cfg, ENV, notion=notion, now=NOW, dry_run=False)
 
     assert code == 0
     yt.assert_called_once()

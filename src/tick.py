@@ -21,7 +21,6 @@ from src.queue_client import (
 from src.slots import due_slots
 from src.youtube_client import post as yt_post
 
-STAMP_DIR = Path.home() / ".cross-platform-poster"
 STUCK_AGE = timedelta(hours=1)  # a Posting row younger than this may be a live tick
 
 
@@ -76,9 +75,7 @@ def _publish(notion, page, platform, dry_run) -> str:
     return f"POSTED '{fields['title']}' -> {platform} ({url})"
 
 
-def run_tick(cfg, env, notion, now, stamp_dir=STAMP_DIR, dry_run=False) -> int:
-    stamp_dir = Path(stamp_dir)
-    stamp_dir.mkdir(parents=True, exist_ok=True)
+def run_tick(cfg, env, notion, now, dry_run=False) -> int:
     failures, lines = [], []
 
     try:
@@ -112,12 +109,9 @@ def run_tick(cfg, env, notion, now, stamp_dir=STAMP_DIR, dry_run=False) -> int:
             except Exception as e:  # noqa: BLE001
                 failures.append(f"FAILED {project}->{platform}: {e}")
     except Exception as e:  # noqa: BLE001 — SMS contract: always print, always exit 1
-        # Deliberately skips the stamp write so the freshness watchdog fires too.
         print(f"TICK CRASHED: {e}")
         return 1
 
-    if not dry_run:  # a dry run must not vouch for the real tick's liveness
-        (stamp_dir / "last_tick").write_text(now.isoformat())
     for line in lines:
         print(line)
     if failures:
