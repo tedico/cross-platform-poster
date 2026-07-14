@@ -1,0 +1,26 @@
+name: Refresh IG Token
+on:
+  schedule:
+    - cron: '0 9 5 * *'   # 5th of each month — well inside the 60-day window
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests
+      - name: Refresh and rotate the secret
+        env:
+          FB_APP_ID: ${{ secrets.FB_APP_ID }}
+          FB_APP_SECRET: ${{ secrets.FB_APP_SECRET }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          GH_TOKEN: ${{ secrets.ADMIN_PAT }}
+        run: |
+          NEW_TOKEN=$(python scripts/refresh_ig_token.py)
+          gh secret set IG_ACCESS_TOKEN --body "$NEW_TOKEN" --repo ${{ github.repository }}

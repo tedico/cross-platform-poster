@@ -1,0 +1,39 @@
+# The poster's heartbeat. Failure alerting is the Zo watchdog's job (it reads
+# this workflow's run status via the GitHub API) — SMS logic stays out of the
+# Action, same division as useful-math's producer/watchdog pair.
+name: Post Queue Tick
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (log what would post, touch nothing)'
+        type: boolean
+        default: false
+concurrency:
+  group: tick
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Run tick
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          POST_QUEUE_DB_ID: ${{ secrets.POST_QUEUE_DB_ID }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          ASSET_STORE_TOKEN: ${{ secrets.ASSET_STORE_TOKEN }}
+        run: python -m src.tick ${{ inputs.dry_run && '--dry-run' || '' }}
