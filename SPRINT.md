@@ -19,12 +19,12 @@ Ted: Human items below (YouTube creds = long pole). Then: push main, open v1-bui
 
 ## Human
 - Google Cloud project + YouTube Data API OAuth creds for @Useful_Math; run scripts/get_youtube_token.py once for the refresh token; set the OAuth app to PRODUCTION status (else refresh tokens die in 7 days). SLOWEST item — start now
-- Check what survives from the May-2026 IG token work (useful-math get_instagram_token.py): existing Meta app? @useful_math_ Business/Creator + linked FB Page? Mint long-lived token + IG user id
+- ~~IG credentials~~ DONE: useful-math's May-2026 Meta app + live long-lived token reused (Instagram-Login family, graph.instagram.com); IG_USER_ID + IG_ACCESS_TOKEN secrets are set — nothing to mint
 - Create fine-grained GitHub PAT (this repo, secrets:write) as ADMIN_PAT secret — lets the monthly workflow rotate the IG token
 - Create Notion integration "cross-platform-poster", share the Post Queue parent page with it; token into GH secrets AND Zo env
-- Set GH repo secrets: NOTION_TOKEN, POST_QUEUE_DB_ID, YT_CLIENT_ID/SECRET/REFRESH_TOKEN, IG_USER_ID, IG_ACCESS_TOKEN, FB_APP_ID/SECRET, ADMIN_PAT, ASSET_STORE_TOKEN
+- Set remaining GH repo secrets: NOTION_TOKEN, POST_QUEUE_DB_ID, YT_CLIENT_ID/SECRET/REFRESH_TOKEN, ADMIN_PAT, ASSET_STORE_TOKEN (IG_USER_ID + IG_ACCESS_TOKEN already set)
 - `cd ~/cross-platform-poster && git push origin main` (bootstrap commit still local — pre-commit hook blocks Claude from pushing main)
-- After merge: manually dispatch Refresh IG Token once to verify the token-refresh flow matches how the IG token was minted
+- After merge: manually dispatch Refresh IG Token once to confirm the ig_refresh_token rotation end-to-end (script matches useful-math's proven monthly flow)
 - Zo watchdog automation: hourly at :30 (needs repo clone + venv + .env on Zo — Claude can do the Zo setup, the automation creation needs your ok)
 
 ## Blockers

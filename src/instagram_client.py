@@ -1,6 +1,8 @@
-"""Publish a Reel via the Instagram Graph API. IG fetches the video itself
-from a PUBLIC video_url (no local file). Long-lived token (~60 days) arrives
-from the caller; a scheduled workflow rotates it. The token travels in
+"""Publish a Reel via the Instagram API with Instagram Login
+(graph.instagram.com). IG fetches the video itself from a PUBLIC video_url
+(no local file). An Instagram-Login long-lived token (~60 days) arrives from
+the caller; a scheduled workflow rotates it via the ig_refresh_token flow
+(scripts/refresh_ig_token.py). The token travels in
 request params — every error path sanitizes it out of messages, since tick
 stamps exception text into the Notion Error field. That includes
 requests-level exceptions (ConnectionError etc.), which embed the full
@@ -9,7 +11,7 @@ import time
 
 import requests
 
-GRAPH = "https://graph.facebook.com/v21.0"
+GRAPH = "https://graph.instagram.com/v21.0"
 TIMEOUT = (10, 60)
 
 
