@@ -55,10 +55,10 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
    Then set the OAuth app to **production** status (testing-status refresh tokens die in
    7 days).
-2. **Instagram credentials.** Meta app with `@useful_math_` as a Business/Creator account
-   linked to a Facebook Page; mint a long-lived access token + the IG user id. Check
-   useful-math's May-2026 `get_instagram_token.py` work first — the app and linkage may
-   already exist.
+2. **Instagram credentials.** DONE — useful-math's May-2026 Meta app and its live
+   long-lived token (`@useful_math_`) got reused. The token is from the **"Instagram API
+   with Instagram Login"** family: it authenticates against `graph.instagram.com` and
+   refreshes via the `ig_refresh_token` flow (no Meta app id/secret needed at runtime).
 3. **Notion.** Create an integration named "cross-platform-poster", share a parent page
    with it, then create the Post Queue DB:
 
@@ -70,7 +70,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
    (Status = Awaiting Approval) manually in Notion.
 4. **GitHub repo secrets** (Settings → Secrets and variables → Actions): `NOTION_TOKEN`,
    `POST_QUEUE_DB_ID`, `YT_CLIENT_ID`, `YT_CLIENT_SECRET`, `YT_REFRESH_TOKEN`,
-   `IG_USER_ID`, `IG_ACCESS_TOKEN`, `FB_APP_ID`, `FB_APP_SECRET`, `ASSET_STORE_TOKEN`
+   `IG_USER_ID`, `IG_ACCESS_TOKEN`, `ASSET_STORE_TOKEN`
    (optional — see Configuration).
 5. **ADMIN_PAT secret**: a fine-grained GitHub PAT scoped to this repo with secrets
    read+write, so the monthly workflow can rotate `IG_ACCESS_TOKEN`.
@@ -82,9 +82,9 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
    `POST_QUEUE_DB_ID`; the automation runs `python -m src.watchdog` and SMSes Ted on
    non-zero exit.
 7. **Verify the token-refresh flow**: manually dispatch "Refresh IG Token" once. The
-   script uses the `fb_exchange_token` flow — if the dispatch fails with an HTTP 400, the
-   token was minted via the `ig_refresh_token` flow instead; adjust
-   `scripts/refresh_ig_token.py` accordingly.
+   script uses the `ig_refresh_token` flow against `graph.instagram.com` — the same flow
+   useful-math's `refresh_instagram_token.py` has run monthly against this exact token
+   family.
 
 ## Usage
 
@@ -230,9 +230,7 @@ Python — so it's a GH secret only and not in `.env.example`):
 | `YT_CLIENT_SECRET` | GH secret | Google Cloud OAuth client secret |
 | `YT_REFRESH_TOKEN` | GH secret | minted once via `scripts/get_youtube_token.py` |
 | `IG_USER_ID` | GH secret | Instagram Business account id |
-| `IG_ACCESS_TOKEN` | GH secret | long-lived token; rotated monthly by `refresh-ig-token.yml` |
-| `FB_APP_ID` | GH secret | Meta app id (token refresh only) |
-| `FB_APP_SECRET` | GH secret | Meta app secret (token refresh only) |
+| `IG_ACCESS_TOKEN` | GH secret | Instagram-Login long-lived token; rotated monthly by `refresh-ig-token.yml` |
 | `ASSET_STORE_TOKEN` | GH secret (optional) | X-Token header for downloading from um-assets (YouTube path only) |
 | `ADMIN_PAT` | GH secret | fine-grained PAT (this repo, secrets read+write) so the refresh workflow can rotate `IG_ACCESS_TOKEN` |
 
@@ -253,7 +251,7 @@ fires once per due slot (daily per platform) until the secret is set.
 | SMS: `no completed tick run in N min` | Scheduled workflows only run on the default branch; or GitHub auto-disabled the schedule after 60 days without repo activity | Merge to `main`; or re-enable BOTH workflows (tick AND refresh) under Actions → select workflow → Enable |
 | Heartbeat SMS on the 1st of the month | Monthly proof-of-life that the watchdog + SMS channel work | No action needed |
 | YouTube upload fails with `invalid_grant` | Refresh token expired — OAuth app not in production status (testing tokens die in 7 days) | Set the app to production, re-run `scripts/get_youtube_token.py`, update `YT_REFRESH_TOKEN` |
-| `Refresh IG Token` dispatch fails with HTTP 400 | Token was minted via the `ig_refresh_token` flow, not `fb_exchange_token` | Adjust `scripts/refresh_ig_token.py` to the matching flow |
+| `Refresh IG Token` dispatch fails with HTTP 400 | Token is not from the Instagram-Login family (`ig_refresh_token` flow), or it expired past the 60-day window | Mint a fresh Instagram-Login long-lived token (see useful-math's May-2026 token work) and update `IG_ACCESS_TOKEN` |
 
 ## Legend
 
@@ -272,11 +270,11 @@ the next due slot) → `Posting` (a tick is working it) → `Posted` (all platfo
 - `src/queue_client.py` — all reads/writes against the Post Queue Notion DB (scheduler-side schema)
 - `src/assets.py` — download asset URLs to temp files (optional X-Token header)
 - `src/youtube_client.py` — YouTube Data API v3 resumable upload, refresh-token flow
-- `src/instagram_client.py` — IG Graph API Reels container → poll → publish, token-sanitized errors
+- `src/instagram_client.py` — Instagram API (Instagram Login, `graph.instagram.com`) Reels container → poll → publish, token-sanitized errors
 - `src/watchdog.py` — hourly health check on Zo: workflow runs via GitHub API + stuck rows + monthly heartbeat
 - `adapter/post_queue_adapter.py` — the one file consumers COPY; `enqueue()` with dedup + gate
 - `scripts/get_youtube_token.py` — one-time local mint of the YouTube refresh token
-- `scripts/refresh_ig_token.py` — exchange the IG long-lived token for a fresh one (run by the monthly workflow)
+- `scripts/refresh_ig_token.py` — refresh the IG long-lived token via `ig_refresh_token` (run by the monthly workflow)
 - `setup_notion.py` — one-time creation of the Post Queue DB (prints `POST_QUEUE_DB_ID`)
 - `.github/workflows/tick.yml` — "Post Queue Tick": 15-min cron + manual dispatch with `dry_run`
 - `.github/workflows/refresh-ig-token.yml` — "Refresh IG Token": monthly (5th, 09:00 UTC), rotates the secret via `ADMIN_PAT`

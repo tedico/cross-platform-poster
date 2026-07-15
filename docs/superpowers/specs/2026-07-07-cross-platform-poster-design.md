@@ -78,7 +78,7 @@ Future consumers (schema-ready, not wired): Super Psychology (IG Reels), Athena
                                           ↑↓
                      Tick (GitHub Actions cron, every 15 min)
                       ├─ youtube_client → YouTube Data API (@Useful_Math)
-                      └─ instagram_client → IG Graph API (@useful_math_)
+                      └─ instagram_client → IG API w/ Instagram Login (@useful_math_)
                                           ↑
                      Watchdog (Zo automation, hourly) — checks the workflow's
                      run status via GitHub API + stuck rows via Notion → SMS
@@ -92,8 +92,9 @@ Components:
    channels.yaml slots, drains at most one row per project+platform per due slot,
    dispatches to the platform client, stamps results back on the row.
 3. **Platform clients** — `src/youtube_client.py` (YouTube Data API v3 resumable upload,
-   OAuth refresh-token flow) and `src/instagram_client.py` (IG Graph API Reels container →
-   poll → publish flow, long-lived token). Each exposes one `post(...) -> permalink`
+   OAuth refresh-token flow) and `src/instagram_client.py` (Instagram API with Instagram
+   Login — `graph.instagram.com` — Reels container → poll → publish flow, long-lived
+   token). Each exposes one `post(...) -> permalink`
    function; the platform registry in tick maps platform names to clients. Adding a
    platform = adding one client module + one registry entry.
 4. **Adapters** — one canonical file consumers COPY (Alexandria pattern, `Used By`
@@ -150,13 +151,15 @@ video is auto-classified as a Short. Returns `https://youtube.com/shorts/<videoI
 testing) or refresh tokens expire after 7 days; confirm current unverified-app limits for
 a single-user `youtube.upload`-scope app against Google's docs.
 
-**Instagram (`instagram_client.py`):** IG Graph API with IG_USER_ID + long-lived
-IG_ACCESS_TOKEN (GH secrets). No file download — IG pulls from the public asset URL:
+**Instagram (`instagram_client.py`):** Instagram API with Instagram Login
+(`graph.instagram.com`) with IG_USER_ID + long-lived IG_ACCESS_TOKEN (GH secrets).
+No file download — IG pulls from the public asset URL:
 create media container (`media_type=REELS`, `video_url`, `caption`) → poll container
 `status_code` until `FINISHED` (bounded wait) → `media_publish` → fetch permalink.
-Returns the permalink. Long-lived tokens last ~60 days; a scheduled monthly GH workflow
-adapts useful-math's `refresh_instagram_token.py` to refresh the token and update the
-repo secret via a fine-grained PAT (`ADMIN_PAT`, Human item).
+Returns the permalink. Long-lived Instagram-Login tokens last ~60 days; a scheduled
+monthly GH workflow refreshes the token via the `ig_refresh_token` flow (same flow as
+useful-math's `refresh_instagram_token.py` — no Meta app id/secret involved) and updates
+the repo secret via a fine-grained PAT (`ADMIN_PAT`, Human item).
 
 Both clients raise loud, descriptive exceptions; the tick's existing error path stamps
 them onto the row.
@@ -198,9 +201,10 @@ platform supervised live before its channel runs unattended.
 1. Google Cloud project + YouTube Data API OAuth credentials for `@Useful_Math`; run the
    one-time consent flow to mint the refresh token; set the OAuth app to **production**
    status. (SLOWEST item — start early.)
-2. Meta app for IG Graph API: check what survives from the May-2026 IG token work in
-   useful-math (`get_instagram_token.py`); ensure `@useful_math_` is a Business/Creator
-   account linked to a Facebook Page; mint a long-lived token + IG user id.
+2. ~~Meta app for IG Graph API: mint a long-lived token + IG user id.~~ **DONE — nothing
+   to mint**: useful-math's existing May-2026 Meta app and its live long-lived token
+   (`@useful_math_`) got reused. The token is from the "Instagram API with Instagram
+   Login" family (`graph.instagram.com`, refreshed via `ig_refresh_token`).
 3. Create a fine-grained GitHub PAT (this repo, secrets:write) as `ADMIN_PAT` so the
    monthly workflow can rotate the IG token secret.
 4. Create the Notion integration "cross-platform-poster" + share the Post Queue parent

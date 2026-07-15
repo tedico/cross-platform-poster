@@ -17,8 +17,6 @@ jobs:
       - run: pip install requests
       - name: Refresh and rotate the secret
         env:
-          FB_APP_ID: ${{ secrets.FB_APP_ID }}
-          FB_APP_SECRET: ${{ secrets.FB_APP_SECRET }}
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           GH_TOKEN: ${{ secrets.ADMIN_PAT }}
         run: |
