@@ -81,6 +81,31 @@ def test_dry_run_never_touches_platforms_or_status(mocker, tmp_path):
     record.assert_not_called()
 
 
+def test_force_posts_outside_slot_time(mocker, tmp_path):
+    """--force ignores slot times: at 03:07 UTC (nowhere near the 12:00 EDT
+    slot) the oldest Ready row still posts."""
+    mark, record, yt, ig = _wire(mocker, _row())
+    off_slot = datetime(2026, 7, 8, 3, 7, tzinfo=timezone.utc)
+    code = run_tick(CFG, ENV, notion=MagicMock(), now=off_slot,
+                    dry_run=False, force=True)
+    assert code == 0
+    yt.assert_called_once()
+    assert record.call_args.kwargs["url"] == "https://youtube.com/shorts/vid1"
+
+
+def test_force_with_dry_run_touches_nothing(mocker, tmp_path):
+    """force + dry-run composes: previews what WOULD post now, touches nothing."""
+    mark, record, yt, ig = _wire(mocker, _row())
+    off_slot = datetime(2026, 7, 8, 3, 7, tzinfo=timezone.utc)
+    code = run_tick(CFG, ENV, notion=MagicMock(), now=off_slot,
+                    dry_run=True, force=True)
+    assert code == 0
+    yt.assert_not_called()
+    ig.assert_not_called()
+    mark.assert_not_called()
+    record.assert_not_called()
+
+
 def test_stuck_posting_row_exits_nonzero(mocker, tmp_path):
     mocker.patch("src.tick.find_due_row", return_value=None)
     mocker.patch("src.tick.find_stuck_posting", return_value=[_row()])
