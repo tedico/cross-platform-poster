@@ -76,7 +76,9 @@ def _publish(notion, page, platform, dry_run) -> str:
     return f"POSTED '{fields['title']}' -> {platform} ({url})"
 
 
-def run_tick(cfg, env, notion, now, dry_run=False) -> int:
+def run_tick(cfg, env, notion, now, dry_run=False, force=False) -> int:
+    """--force posts the oldest Ready row for every configured platform
+    immediately (manual 'post now' lever); slots remain the unattended default."""
     failures, lines = [], []
 
     try:
@@ -96,7 +98,12 @@ def run_tick(cfg, env, notion, now, dry_run=False) -> int:
                           "if absent, just re-Ready.")
             failures.append(f"STUCK row '{title}' was in Posting")
 
-        for project, platform in due_slots(cfg, now):
+        if force:
+            pairs = [(proj, plat) for proj, pcfg in cfg.items()
+                     for plat in pcfg["platforms"]]  # every configured pair, slots ignored
+        else:
+            pairs = due_slots(cfg, now)
+        for project, platform in pairs:
             if project not in env["project_names"]:
                 failures.append(f"CONFIG: project '{project}' missing from "
                                 f"project_names mapping")
@@ -124,6 +131,7 @@ def run_tick(cfg, env, notion, now, dry_run=False) -> int:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
     load_dotenv()
     cfg = load_channels(Path(__file__).resolve().parent.parent / "channels.yaml")
@@ -133,7 +141,8 @@ def main():
     }
     notion = Client(auth=os.environ["NOTION_TOKEN"])
     sys.exit(run_tick(cfg, env, notion,
-                      now=datetime.now(timezone.utc), dry_run=args.dry_run))
+                      now=datetime.now(timezone.utc), dry_run=args.dry_run,
+                      force=args.force))
 
 
 if __name__ == "__main__":

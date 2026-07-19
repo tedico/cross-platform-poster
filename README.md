@@ -109,6 +109,19 @@ Manual operations:
   add a `platform: url` line to **Posted Links** BEFORE re-Ready-ing — otherwise the tick
   will post it again. If it doesn't exist, just re-Ready.
 
+### Post now (manual override)
+
+Publishes the **oldest** `Ready` row per configured platform immediately, ignoring slot
+times. All the same safety rails apply (env-secret check, Posted Links double-post
+protection, stuck sweep, dry-run compose).
+
+- **Actions UI**: repo → Actions → "Post Queue Tick" → Run workflow → check *force*.
+- **CLI**:
+
+  ```sh
+  gh workflow run "Post Queue Tick" --repo tedico/cross-platform-poster -f force=true
+  ```
+
 ## The socket contract 🔌 (read this, human)
 
 This is the instruction guide for plugging ANYTHING into the poster.
