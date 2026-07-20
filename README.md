@@ -23,9 +23,8 @@ the Pivot section of `docs/superpowers/specs/2026-07-07-cross-platform-poster-de
   the watchdog. No servers, no containers.
 - **Scheduled workflows run only on the default branch.** Nothing posts (and the watchdog
   alarms "no completed tick run") until the code is merged to `main`.
-- **GitHub cron jitter can skip a day's slot** — if a scheduled run lands past its 15-min
-  cell, that slot is missed. Accepted trade-off: the row simply posts at the next day's
-  slot.
+- **GitHub throttles the */15 cron to roughly hourly**, so slots match on the local HOUR:
+  a slot fires on the first run within its hour (the configured minute is advisory).
 - **Asset URLs must be PUBLICLY fetchable.** Instagram's API downloads the video itself
   from the URL in the row — a private URL fails the container step every time.
 - **IG long-lived tokens expire after ~60 days.** The `Refresh IG Token` workflow rotates
@@ -163,10 +162,10 @@ This is the instruction guide for plugging ANYTHING into the poster.
 | Error | text | Failure detail, stamped by the tick |
 | (created time) | built-in | Drives oldest-first draining — Notion's automatic timestamp, no column needed |
 
-**Tick** (`src/tick.py`, GitHub Actions cron every 15 min): quantizes the tick time down
-to the 15-minute grid and compares it against each slot in that slot's own timezone, so a
-slot fires exactly once per day regardless of cron jitter (or only on the slot's `days`
-weekdays, when configured). For each due project+platform
+**Tick** (`src/tick.py`, GitHub Actions cron every 15 min — delivered roughly hourly by
+GH throttling): compares the tick's local HOUR against each slot's hour in that slot's
+own timezone, so a slot fires on the first run within its hour (or only on the slot's
+`days` weekdays, when configured). For each due project+platform
 it takes the oldest `Ready` row tagged with that platform and not yet in its Posted
 Links, fails fast if any required secret is missing or empty (GH Actions maps unset
 secrets to empty strings — the row is left `Ready`), marks the row `Posting`, dispatches
@@ -285,7 +284,7 @@ the next due slot) → `Posting` (a tick is working it) → `Posted` (all platfo
 **File map**:
 
 - `src/tick.py` — the scheduler tick: due slots → due rows → platform clients → stamp results (`python -m src.tick [--dry-run]`)
-- `src/slots.py` — which project+platform slots are due at this quantized 15-min tick
+- `src/slots.py` — which project+platform slots are due at this tick (hour-wide matching)
 - `src/config_loader.py` — load + validate `channels.yaml`
 - `src/queue_client.py` — all reads/writes against the Post Queue Notion DB (scheduler-side schema)
 - `src/assets.py` — download asset URLs to temp files (optional X-Token header)
