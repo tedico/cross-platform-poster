@@ -20,15 +20,25 @@ def test_slot_due_at_exact_local_time():
     assert due_slots(CFG, now) == [("useful-math", "youtube-shorts")]
 
 
-def test_slot_not_due_other_time():
-    now = datetime(2026, 7, 8, 16, 15, tzinfo=timezone.utc)
+def test_slot_not_due_other_hour():
+    # 17:15 UTC == 13:15 ET — a different hour than the 12:00 ET slot
+    now = datetime(2026, 7, 8, 17, 15, tzinfo=timezone.utc)
     assert due_slots(CFG, now) == []
 
 
-def test_tick_time_quantized_down():
-    # 16:07 UTC quantizes to the 16:00 tick -> 12:00 ET slot is due
+def test_slot_due_any_minute_within_hour():
+    # 16:07 UTC == 12:07 ET — inside the 12-hour -> 12:00 ET slot is due
     now = datetime(2026, 7, 8, 16, 7, tzinfo=timezone.utc)
     assert due_slots(CFG, now) == [("useful-math", "youtube-shorts")]
+
+
+def test_slot_fires_any_minute_within_hour():
+    # Last minute of the slot's local hour: 16:59 UTC == 12:59 ET -> due
+    now = datetime(2026, 7, 8, 16, 59, tzinfo=timezone.utc)
+    assert due_slots(CFG, now) == [("useful-math", "youtube-shorts")]
+    # One minute before the hour opens: 15:59 UTC == 11:59 ET -> not due
+    now = datetime(2026, 7, 8, 15, 59, tzinfo=timezone.utc)
+    assert due_slots(CFG, now) == []
 
 
 def test_evening_slot_in_local_tz():

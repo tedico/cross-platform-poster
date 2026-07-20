@@ -1,10 +1,16 @@
 """Which project+platform slots are due at this tick?
 
-The scheduler ticks every ~15 minutes. We quantize the tick time DOWN to the
-15-minute grid and compare against each slot's HH:MM in ITS OWN timezone, so a
-slot fires exactly once per day regardless of cron jitter. An optional 'days'
-list restricts a slot to those weekdays, evaluated in the slot's own timezone —
-a midnight-ET Sunday slot is Sunday IN ET, regardless of the UTC date."""
+We request a */15 cron, but GitHub Actions delivers scheduled runs roughly
+hourly regardless — so a slot is due when the tick's LOCAL HOUR (in the slot's
+own timezone) equals the slot's hour. The slot's minute is advisory only:
+config still accepts ':00/:15/:30/:45' for backward compat, but the slot fires
+on the first run within its hour. Combined with find_due_row's posted-platform
+idempotency the same ROW can't double-post; two runs inside one hour could post
+two DIFFERENT Ready rows back-to-back (accepted: observed GH cadence is
+>=54 min between runs, and the queue drains oldest-first either way). An
+optional 'days' list restricts a slot to those weekdays, evaluated in the
+slot's own timezone — a midnight-ET Sunday slot is Sunday IN ET, regardless of
+the UTC date."""
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -16,9 +22,8 @@ def due_slots(cfg: dict, now: datetime) -> list[tuple[str, str]]:
     for project, pcfg in cfg.items():
         for platform, s in pcfg["platforms"].items():
             local = now.astimezone(ZoneInfo(s["tz"]))
-            quantized = local.replace(minute=(local.minute // 15) * 15,
-                                      second=0, microsecond=0)
-            if quantized.strftime("%H:%M") != s["slot"]:
+            slot_hour = int(s["slot"][:2])  # canonical zero-padded "HH:MM"
+            if local.hour != slot_hour:
                 continue
             if "days" in s and local.strftime("%a").lower() not in s["days"]:
                 continue
