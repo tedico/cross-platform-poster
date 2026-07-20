@@ -38,6 +38,7 @@ def main():
             "Caption": {"rich_text": {}},
             "Platforms": {"multi_select": {"options": [{"name": p} for p in PLATFORMS]}},
             "Status": {"select": {"options": [{"name": s} for s in STATUS]}},
+            "Publish Date & Time": {"date": {}},
             "Posted Links": {"rich_text": {}},
             "Error": {"rich_text": {}},
         },

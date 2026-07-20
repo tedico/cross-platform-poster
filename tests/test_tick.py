@@ -35,6 +35,7 @@ def _row(platforms=("youtube-shorts",)):
 
 def _wire(mocker, row):
     mocker.patch("src.tick.find_due_row", return_value=row)
+    mocker.patch("src.tick.find_due_dated_row", return_value=None)
     mocker.patch("src.tick.find_stuck_posting", return_value=[])
     mocker.patch("src.tick.download_assets", return_value=["/tmp/hua.mp4"])
     mocker.patch.dict(os.environ, POSTER_ENV)
@@ -102,6 +103,45 @@ def test_force_with_dry_run_touches_nothing(mocker, tmp_path):
     assert code == 0
     yt.assert_not_called()
     ig.assert_not_called()
+    mark.assert_not_called()
+    record.assert_not_called()
+
+
+def test_dated_row_posts_outside_slot_schedule(mocker, tmp_path):
+    """A row with a Publish Date & Time posts at the first tick at/after its
+    moment — 03:07 UTC on a non-slot hour, nowhere near the 12:00 EDT slot."""
+    mocker.patch("src.tick.find_due_dated_row", return_value=_row())
+    undated = mocker.patch("src.tick.find_due_row", return_value=None)
+    mocker.patch("src.tick.find_stuck_posting", return_value=[])
+    mocker.patch("src.tick.download_assets", return_value=["/tmp/hua.mp4"])
+    mocker.patch.dict(os.environ, POSTER_ENV)
+    mocker.patch("src.tick.mark_posting")
+    record = mocker.patch("src.tick.record_result")
+    yt = mocker.patch("src.tick.yt_post",
+                      return_value="https://youtube.com/shorts/vid1")
+    off_slot = datetime(2026, 7, 8, 3, 7, tzinfo=timezone.utc)
+    code = run_tick(CFG, ENV, notion=MagicMock(), now=off_slot, dry_run=False)
+    assert code == 0
+    yt.assert_called_once()
+    assert record.call_args.kwargs["url"] == "https://youtube.com/shorts/vid1"
+    undated.assert_not_called()  # no slot due at 03:07 UTC — dated pass only
+
+
+def test_force_never_yanks_future_dated_row(mocker, tmp_path):
+    """--force is 'post the queue now', not 'break my scheduled holds': the
+    dated pass returns only OVERDUE rows (here: none), and the force pair loop
+    still drains via find_due_row (undated-only) — a future-dated row is never
+    touched."""
+    dated = mocker.patch("src.tick.find_due_dated_row", return_value=None)
+    undated = mocker.patch("src.tick.find_due_row", return_value=None)
+    mocker.patch("src.tick.find_stuck_posting", return_value=[])
+    mark = mocker.patch("src.tick.mark_posting")
+    record = mocker.patch("src.tick.record_result")
+    code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW,
+                    dry_run=False, force=True)
+    assert code == 0
+    dated.assert_called_once()   # dated pass ran (and found nothing overdue)
+    undated.assert_called_once()  # force path still drains undated rows only
     mark.assert_not_called()
     record.assert_not_called()
 

@@ -12,8 +12,11 @@ Used By: (stamped in the cross-platform-poster README)
 
 
 def enqueue(client, db_id: str, *, project: str, title: str, asset_urls: list,
-            caption: str, platforms: list, gate: str = "gated"):
-    """Create a Post Queue row. Returns the new page, or None if deduped."""
+            caption: str, platforms: list, gate: str = "gated",
+            publish_at: str = None):
+    """Create a Post Queue row. Returns the new page, or None if deduped.
+    publish_at: optional ISO datetime; the poster publishes at the first run
+    at/after it, overriding the channel schedule."""
     if not asset_urls:
         raise ValueError("enqueue: asset_urls must be a non-empty list")
     if not platforms:
@@ -31,15 +34,15 @@ def enqueue(client, db_id: str, *, project: str, title: str, asset_urls: list,
     asset_type = "video" if asset_urls[0].lower().endswith(
         (".mp4", ".mov", ".webm")) else "image-set"
     status = "Ready" if gate == "auto" else "Awaiting Approval"
-    return client.pages.create(
-        parent={"database_id": db_id},
-        properties={
-            "Title": {"title": [{"text": {"content": title}}]},
-            "Project": {"select": {"name": project}},
-            "Asset URL(s)": {"rich_text": [{"text": {"content": "\n".join(asset_urls)}}]},
-            "Asset Type": {"select": {"name": asset_type}},
-            "Caption": {"rich_text": [{"text": {"content": caption[:2000]}}]},
-            "Platforms": {"multi_select": [{"name": p} for p in platforms]},
-            "Status": {"select": {"name": status}},
-        },
-    )
+    properties = {
+        "Title": {"title": [{"text": {"content": title}}]},
+        "Project": {"select": {"name": project}},
+        "Asset URL(s)": {"rich_text": [{"text": {"content": "\n".join(asset_urls)}}]},
+        "Asset Type": {"select": {"name": asset_type}},
+        "Caption": {"rich_text": [{"text": {"content": caption[:2000]}}]},
+        "Platforms": {"multi_select": [{"name": p} for p in platforms]},
+        "Status": {"select": {"name": status}},
+    }
+    if publish_at is not None:
+        properties["Publish Date & Time"] = {"date": {"start": publish_at}}
+    return client.pages.create(parent={"database_id": db_id}, properties=properties)
