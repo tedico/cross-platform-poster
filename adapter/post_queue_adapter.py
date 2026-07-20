@@ -3,8 +3,9 @@ Do NOT import it across repos (engines-never-shared). After copying, add your
 project to the 'Used By' list in the cross-platform-poster README.
 
 The whole contract: call enqueue() when an asset is finished. gate='auto'
-rows post at the next slot; gate='gated' rows wait for Ted to flip
-Awaiting Approval -> Ready in the Post Queue.
+rows are immediately eligible; gate='gated' rows wait for Ted to flip
+Awaiting Approval -> Ready in the Post Queue. Either way a row posts when
+its Publish Date & Time arrives (undated rows park until manually forced).
 
 Requires: notion-client. Env: NOTION_TOKEN, POST_QUEUE_DB_ID.
 Used By: (stamped in the cross-platform-poster README)
@@ -16,7 +17,7 @@ def enqueue(client, db_id: str, *, project: str, title: str, asset_urls: list,
             publish_at: str = None):
     """Create a Post Queue row. Returns the new page, or None if deduped.
     publish_at: optional ISO datetime; the poster publishes at the first run
-    at/after it, overriding the channel schedule."""
+    at/after it. Without it the row parks until manually forced."""
     if not asset_urls:
         raise ValueError("enqueue: asset_urls must be a non-empty list")
     if not platforms:

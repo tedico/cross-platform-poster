@@ -1,6 +1,8 @@
 # cross-platform-poster — Design Spec
 
-**Date:** 2026-07-07 (revised 2026-07-13: direct platform APIs on GitHub Actions — see Pivot)
+**Date:** 2026-07-07 (revised 2026-07-13: direct platform APIs on GitHub Actions — see
+Pivot; revised 2026-07-20: slots removed, purely date-driven — see the addendum at the
+end)
 **Status:** Approved design, implementation in progress
 **Repo:** `tedico/cross-platform-poster` (public)
 
@@ -44,8 +46,9 @@ queue client, adapter, status machine — is unchanged.
 - One central queue where every queued/posted asset across all projects is visible.
 - Per-project approval gate: a project is either `auto` (rows post without review) or
   `gated` (Ted flips a status in Notion before anything goes live).
-- Per-channel publish slots: bursts of production become a steady drip (e.g. one post/day
-  per platform).
+- ~~Per-channel publish slots: bursts of production become a steady drip (e.g. one
+  post/day per platform).~~ **SUPERSEDED 2026-07-20**: scheduling is per-row
+  (`Publish Date & Time`) — see the addendum.
 - No silent failures — SMS on every failure (via the Zo watchdog), watchdog on the service
   itself, monthly heartbeat proving the watchdog is alive.
 - $0/mo: public-repo GitHub Actions + Zo (already owned) + Notion (already owned).
@@ -88,9 +91,10 @@ Components:
 
 1. **Post Queue** — a Notion database owned by this project. The fixed schema IS the plug
    standard. All state lives here. (Unchanged from original design.)
-2. **Tick** — `src/tick.py`, run by a GitHub Actions cron every 15 minutes. Reads
-   channels.yaml slots, drains at most one row per project+platform per due slot,
-   dispatches to the platform client, stamps results back on the row.
+2. **Tick** — `src/tick.py`, run by a GitHub Actions cron every 15 minutes. *(2026-07-20:
+   date-driven.)* Publishes, per configured project+platform, the earliest `Ready` row
+   whose `Publish Date & Time` is due, dispatches to the platform client, stamps results
+   back on the row. Undated rows park; `--force` is the manual drain.
 3. **Platform clients** — `src/youtube_client.py` (YouTube Data API v3 resumable upload,
    OAuth refresh-token flow) and `src/instagram_client.py` (Instagram API with Instagram
    Login — `graph.instagram.com` — Reels container → poll → publish flow, long-lived
@@ -126,20 +130,25 @@ Components:
 
 Status semantics unchanged: gated adapters create `Awaiting Approval` (Ted flips to
 `Ready` in a "🙋 Awaiting Approval" view); auto adapters create `Ready`; one row fans out
-to multiple platforms whose slots may fire at different times — after each platform
-attempt the row returns to `Ready` until all platforms are stamped (`Posted`), any
-failure → `Failed`; platforms already in `Posted Links` are never re-posted.
+to multiple platforms — after each platform attempt the row returns to `Ready` until all
+platforms are stamped (`Posted`), any failure → `Failed`; platforms already in
+`Posted Links` are never re-posted.
 
 ## Channel config — `channels.yaml`
 
-(Unchanged: slots only, adapter owns the gate.) UM slots Sun/Tue/Thu 00:00 ET for both
+~~(Unchanged: slots only, adapter owns the gate.) UM slots Sun/Tue/Thu 00:00 ET for both
 platforms (AutoShorts cadence parity), via the optional per-platform `days:` list —
-absent `days:` means daily.
+absent `days:` means daily.~~
 
-**GitHub Actions cron jitter (accepted trade-off):** scheduled workflows can be delayed;
-if a run lands past its 15-min cell, that day's slot is skipped and the row simply posts
-at the next day's slot. For a 1/day cadence with a slowly-drained queue this is benign.
-Revisit (grace-window logic) only if skips are observed in practice.
+~~**GitHub Actions cron jitter (accepted trade-off):** scheduled workflows can be
+delayed; if a run lands past its 15-min cell, that day's slot is skipped and the row
+simply posts at the next day's slot. For a 1/day cadence with a slowly-drained queue this
+is benign. Revisit (grace-window logic) only if skips are observed in practice.~~
+
+**SUPERSEDED 2026-07-20** (see the addendum): `channels.yaml` is now just
+`project -> platforms: [list]`; scheduling lives on each row's `Publish Date & Time`.
+Cron jitter now means only up-to-~an-hour drift past a row's set time, never a skipped
+day.
 
 ## Platform clients — contracts
 
@@ -219,7 +228,7 @@ platform supervised live before its channel runs unattended.
 | Standalone vs embedded per-project | Standalone repo + copied adapters (Alexandria pattern) |
 | Handoff contract | Central Notion Post Queue DB owned by this project |
 | Approval gate | Per-project, owned by the adapter (`auto`/`gated`); UM = `auto` |
-| Publish timing | Per-channel slots + optional `days:` weekday filter; UM Sun/Tue/Thu 00:00 ET; GH-cron jitter slot-skip accepted |
+| ~~Publish timing: per-channel slots + optional `days:` weekday filter; UM Sun/Tue/Thu 00:00 ET; GH-cron jitter slot-skip accepted~~ | **SUPERSEDED 2026-07-20** — purely date-driven via per-row `Publish Date & Time`; undated rows park; `--force` is the manual lever |
 | v1 consumer/platforms | Useful Math → YouTube Shorts + IG Reels |
 | UM integration | Watcher adapter on the 3B final-video folder; `<person-slug>.mp4` naming contract |
 | Name / visibility | `cross-platform-poster`, public |
@@ -227,3 +236,23 @@ platform supervised live before its channel runs unattended.
 | Posting engine (revised) | Direct platform API clients (YouTube Data API, IG Graph API), $0/mo |
 | Scheduler host (revised) | GitHub Actions cron (15-min, free public repo); Zo hosts the hourly watchdog |
 | Alerting | SMS logic stays out of the Action; Zo watchdog checks run status via GitHub API (useful-math pattern) |
+
+## 2026-07-20: slots removed — date-driven only (Ted)
+
+The slot/day schedule (`slot:`/`tz:`/`cadence:`/`days:` in `channels.yaml`, `src/slots.py`)
+is deleted entirely. PR #6's per-row `Publish Date & Time` made fixed slots redundant:
+once every row can carry its own exact publish moment, a parallel fixed-slot lane is a
+second scheduling system to reason about, test, and keep honest — for no capability the
+date field doesn't already provide (and the date field provides more: any moment, not
+just a daily hour on chosen weekdays).
+
+Final semantics:
+
+- A row posts ONLY when its `Publish Date & Time` is due — first ~hourly tick at/after
+  it (the dated pass from PR #6, unchanged).
+- Undated `Ready` rows **park indefinitely** — intentional, not an error, no alarm.
+- `--force` posts the oldest Ready row per configured platform that is undated OR
+  overdue — never a future-dated row (unchanged guarantee). Undated rows are now
+  force's exclusive lane.
+- The */15 GitHub Actions cron keeps running: it is the date-checker heartbeat.
+- `channels.yaml` shrinks to `project -> platforms: [list]`.
