@@ -93,9 +93,23 @@ How a row flows:
    `gate="auto"` rows land as `Ready`; `gate="gated"` rows land as `Awaiting Approval`.
 2. Gated rows wait in the "🙋 Awaiting Approval" view until Ted flips Status to `Ready`.
 3. At the next due slot for that project+platform (see `channels.yaml`), the tick posts
-   the oldest eligible `Ready` row to that platform.
+   the oldest eligible `Ready` row to that platform. Rows with a **Publish Date & Time**
+   don't ride the slots — see "Scheduling a specific date & time" below.
 4. **Posted Links** collects one `platform: url` line per successful platform; when every
    tagged platform has a link, the row becomes `Posted`.
+
+### Scheduling a specific date & time
+
+Set the **Publish Date & Time** property (date WITH time) on the Video Production row
+before approving — or directly on the Post Queue row. A dated row ignores the Sun/Tue/Thu
+slot schedule entirely: it posts at the first tick run at/after its moment, any day, any
+hour (runs are roughly hourly, so expect up to ~an hour of drift past the set time).
+Slots never drain a dated row early, and `--force` never yanks a future-dated one — a
+future date is a deliberate hold. Leave the property empty and the row rides the normal
+schedule (oldest-first at slots), exactly as before.
+
+Timezone: pick the datetime in Notion as usual. If the value carries no timezone
+(Notion "floating" time), the poster interprets it as **America/New_York**.
 
 Manual operations:
 
@@ -112,7 +126,10 @@ Manual operations:
 
 Publishes the **oldest** `Ready` row per configured platform immediately, ignoring slot
 times. All the same safety rails apply (env-secret check, Posted Links double-post
-protection, stuck sweep, dry-run compose).
+protection, stuck sweep, dry-run compose). Force covers undated rows AND overdue-dated
+rows (the dated pass runs on every tick anyway) — but it never publishes a
+**future-dated** row: a Publish Date & Time in the future is a deliberate hold that only
+its moment arriving (or clearing the property) releases.
 
 - **Actions UI**: repo → Actions → "Post Queue Tick" → Run workflow → check *force*.
 - **CLI**:
@@ -130,6 +147,8 @@ This is the instruction guide for plugging ANYTHING into the poster.
    repos. Add your repo to **Used By** below.
 2. When an asset is finished, call
    `enqueue(client, db_id, project=..., title=..., asset_urls=[...], caption=..., platforms=[...], gate="auto"|"gated")`.
+   Optional `publish_at=` (ISO datetime string) schedules the row for a specific
+   moment instead of the slot schedule.
 3. Asset URLs must be PUBLICLY downloadable (Instagram fetches them directly;
    YouTube's client downloads then uploads — set `ASSET_STORE_TOKEN` only if
    your store needs its X-Token header for the YouTube path).
@@ -158,6 +177,7 @@ This is the instruction guide for plugging ANYTHING into the poster.
 | Caption | text | Platform-ready caption incl. hashtags |
 | Platforms | multi-select | `youtube-shorts`, `ig-reels`, `ig-carousel`, `linkedin`, … |
 | Status | select | `Awaiting Approval` → `Ready` → `Posting` → `Posted` / `Failed` |
+| Publish Date & Time | date (with time) | Optional. Set = post at the first tick at/after this moment (slots don't apply, `--force` won't yank it early). Empty = ride the slot schedule. Floating (no-timezone) values are read as America/New_York |
 | Posted Links | text | Permalinks per platform (`platform: url` lines), stamped by the tick |
 | Error | text | Failure detail, stamped by the tick |
 | (created time) | built-in | Drives oldest-first draining — Notion's automatic timestamp, no column needed |
@@ -165,9 +185,12 @@ This is the instruction guide for plugging ANYTHING into the poster.
 **Tick** (`src/tick.py`, GitHub Actions cron every 15 min — delivered roughly hourly by
 GH throttling): compares the tick's local HOUR against each slot's hour in that slot's
 own timezone, so a slot fires on the first run within its hour (or only on the slot's
-`days` weekdays, when configured). For each due project+platform
-it takes the oldest `Ready` row tagged with that platform and not yet in its Posted
-Links, fails fast if any required secret is missing or empty (GH Actions maps unset
+`days` weekdays, when configured). Before the slot pass, a **dated pass** runs on every
+tick: for each configured project+platform it publishes the earliest overdue row whose
+**Publish Date & Time** is at/before now (dated rows are excluded from the slot pass
+server-side, so slots can never drain them early). Then, for each due project+platform,
+it takes the oldest undated `Ready` row tagged with that platform and not yet in its
+Posted Links, fails fast if any required secret is missing or empty (GH Actions maps unset
 secrets to empty strings — the row is left `Ready`), marks the row `Posting`, dispatches
 to the platform client, and stamps the result: success writes the permalink into Posted
 Links per platform (the row returns to `Ready` until ALL tagged platforms are done, then

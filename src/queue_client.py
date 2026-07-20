@@ -1,6 +1,11 @@
 """All reads/writes against the Post Queue Notion DB. The DB is the plug's
 only state store; this module is the only place its schema is spelled out
 scheduler-side (the copied adapter has its own self-contained copy by design)."""
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+# Floating Notion datetimes (no offset) are interpreted in this zone.
+DEFAULT_TZ = ZoneInfo("America/New_York")
 
 
 def _rt(prop) -> str:
@@ -18,6 +23,9 @@ def row_fields(page: dict) -> dict:
         "caption": _rt(p["Caption"]),
         "platforms": [m["name"] for m in p["Platforms"]["multi_select"]],
         "status": (p["Status"]["select"] or {}).get("name", ""),
+        # .get twice: rows created before the schema change lack the property.
+        "publish_at": ((p.get("Publish Date & Time") or {}).get("date")
+                       or {}).get("start"),
         "posted_links": _rt(p["Posted Links"]),
         "error": _rt(p["Error"]),
     }
@@ -33,18 +41,63 @@ def parse_posted_links(text: str) -> dict:
 
 
 def find_due_row(client, db_id: str, project: str, platform: str):
-    """Oldest Ready row for project targeting platform, not yet posted there."""
+    """Oldest UNDATED Ready row for project targeting platform, not yet posted
+    there. Dated rows (Publish Date & Time set) are deliberate holds — slots
+    never drain them; find_due_dated_row handles those."""
     resp = client.databases.query(
         database_id=db_id,
         filter={"and": [
             {"property": "Project", "select": {"equals": project}},
             {"property": "Status", "select": {"equals": "Ready"}},
             {"property": "Platforms", "multi_select": {"contains": platform}},
+            # DEPLOY ORDER: this filter errors if the DB doesn't have the
+            # "Publish Date & Time" property yet — add it to the live Post
+            # Queue BEFORE merging this code (new DBs get it via setup_notion).
+            {"property": "Publish Date & Time", "date": {"is_empty": True}},
         ]},
         sorts=[{"timestamp": "created_time", "direction": "ascending"}],
     )
     for page in resp["results"]:
         fields = row_fields(page)
+        if platform not in parse_posted_links(fields["posted_links"]):
+            return page
+    return None
+
+
+def _is_overdue(publish_at: str, now: datetime) -> bool:
+    """Client-side truth for 'this dated row is due': parse the Notion start
+    datetime, treat floating (offset-less) values as America/New_York, and
+    require it to be at/before aware-UTC now."""
+    try:
+        dt = datetime.fromisoformat(publish_at.replace("Z", "+00:00"))
+    except ValueError:
+        return False  # unparseable date -> never due, never yanked
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=DEFAULT_TZ)
+    return dt <= now
+
+
+def find_due_dated_row(client, db_id: str, project: str, platform: str,
+                       now: datetime):
+    """Earliest overdue DATED Ready row for project targeting platform, not
+    yet posted there. Notion's on_or_before compares absolute instants for
+    zoned values but date-level for floating ones, so the overdue check is
+    re-verified client-side (_is_overdue) — belt and braces."""
+    resp = client.databases.query(
+        database_id=db_id,
+        filter={"and": [
+            {"property": "Project", "select": {"equals": project}},
+            {"property": "Status", "select": {"equals": "Ready"}},
+            {"property": "Platforms", "multi_select": {"contains": platform}},
+            {"property": "Publish Date & Time",
+             "date": {"on_or_before": now.isoformat()}},
+        ]},
+        sorts=[{"property": "Publish Date & Time", "direction": "ascending"}],
+    )
+    for page in resp["results"]:
+        fields = row_fields(page)
+        if not fields["publish_at"] or not _is_overdue(fields["publish_at"], now):
+            continue
         if platform not in parse_posted_links(fields["posted_links"]):
             return page
     return None

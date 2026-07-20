@@ -1,16 +1,18 @@
+from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 import pytest
 
 from src.queue_client import (
-    find_due_row, mark_posting, record_result, parse_posted_links, row_fields,
+    find_due_dated_row, find_due_row, mark_posting, record_result,
+    parse_posted_links, row_fields,
 )
 
 
 def _page(page_id="p1", status="Ready", platforms=("youtube-shorts", "ig-reels"),
           posted_links="", assets="https://a/x.mp4", title="Hua Luogeng",
-          caption="cap", asset_type="video"):
-    return {
+          caption="cap", asset_type="video", publish_at=None):
+    page = {
         "id": page_id,
         "properties": {
             "Title": {"title": [{"plain_text": title}]},
@@ -24,6 +26,11 @@ def _page(page_id="p1", status="Ready", platforms=("youtube-shorts", "ig-reels")
             "Error": {"rich_text": []},
         },
     }
+    # Only rows created after the schema change carry the property at all —
+    # the default page mimics a pre-schema-change row (property missing).
+    if publish_at is not None:
+        page["properties"]["Publish Date & Time"] = {"date": {"start": publish_at}}
+    return page
 
 
 def test_find_due_row_picks_oldest_ready(mocker):
@@ -110,3 +117,82 @@ def test_row_fields_extracts_plain_values():
     assert f["title"] == "Hua Luogeng"
     assert f["asset_urls"] == ["https://a/x.mp4"]
     assert f["platforms"] == ["youtube-shorts", "ig-reels"]
+
+
+def test_row_fields_missing_publish_property_is_none():
+    """Rows created before the schema change lack the property entirely."""
+    page = _page()
+    assert "Publish Date & Time" not in page["properties"]  # guard the premise
+    assert row_fields(page)["publish_at"] is None
+
+
+def test_row_fields_cleared_publish_date_is_none():
+    page = _page()
+    page["properties"]["Publish Date & Time"] = {"date": None}  # date cleared
+    assert row_fields(page)["publish_at"] is None
+
+
+def test_row_fields_publish_at_present():
+    f = row_fields(_page(publish_at="2026-07-22T23:59:00.000-04:00"))
+    assert f["publish_at"] == "2026-07-22T23:59:00.000-04:00"
+
+
+def test_find_due_row_filters_out_dated_rows():
+    """The slot flow must never drain a dated row — server-side is_empty."""
+    client = MagicMock()
+    client.databases.query.return_value = {"results": []}
+    find_due_row(client, "db1", "Useful Math", "youtube-shorts")
+    conds = client.databases.query.call_args.kwargs["filter"]["and"]
+    assert {"property": "Publish Date & Time", "date": {"is_empty": True}} in conds
+
+
+NOW = datetime(2026, 7, 23, 4, 30, tzinfo=timezone.utc)
+
+
+def test_find_due_dated_row_returns_overdue_row():
+    client = MagicMock()
+    client.databases.query.return_value = {
+        "results": [_page("d1", publish_at="2026-07-22T23:59:00.000-04:00")]}
+    row = find_due_dated_row(client, "db1", "Useful Math", "youtube-shorts", NOW)
+    assert row["id"] == "d1"
+    kwargs = client.databases.query.call_args.kwargs
+    assert kwargs["sorts"] == [
+        {"property": "Publish Date & Time", "direction": "ascending"}]
+    conds = kwargs["filter"]["and"]
+    assert {"property": "Publish Date & Time",
+            "date": {"on_or_before": NOW.isoformat()}} in conds
+
+
+def test_find_due_dated_row_skips_future_row_client_side():
+    """Even if Notion's murky floating-time filter returns a future row, the
+    client-side check must reject it."""
+    client = MagicMock()
+    client.databases.query.return_value = {
+        "results": [_page("fut", publish_at="2026-07-24T12:00:00.000-04:00")]}
+    assert find_due_dated_row(client, "db1", "Useful Math",
+                              "youtube-shorts", NOW) is None
+
+
+def test_find_due_dated_row_respects_posted_links():
+    client = MagicMock()
+    client.databases.query.return_value = {"results": [
+        _page("done", publish_at="2026-07-21T12:00:00.000-04:00",
+              posted_links="youtube-shorts: https://yt/1"),
+        _page("fresh", publish_at="2026-07-22T12:00:00.000-04:00"),
+    ]}
+    row = find_due_dated_row(client, "db1", "Useful Math", "youtube-shorts", NOW)
+    assert row["id"] == "fresh"
+
+
+def test_floating_publish_at_is_interpreted_as_eastern():
+    """A floating (offset-less) datetime means America/New_York: 23:59 EDT is
+    03:59 UTC next day — overdue at 04:30Z, not yet at 03:30Z."""
+    client = MagicMock()
+    client.databases.query.return_value = {
+        "results": [_page("f1", publish_at="2026-07-22T23:59:00")]}
+    overdue = datetime(2026, 7, 23, 4, 30, tzinfo=timezone.utc)
+    not_yet = datetime(2026, 7, 23, 3, 30, tzinfo=timezone.utc)
+    assert find_due_dated_row(client, "db1", "Useful Math",
+                              "youtube-shorts", overdue)["id"] == "f1"
+    assert find_due_dated_row(client, "db1", "Useful Math",
+                              "youtube-shorts", not_yet) is None

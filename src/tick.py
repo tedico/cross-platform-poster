@@ -16,7 +16,8 @@ from src.assets import download_assets
 from src.config_loader import load_channels
 from src.instagram_client import post as ig_post
 from src.queue_client import (
-    find_due_row, find_stuck_posting, mark_posting, record_result, row_fields,
+    find_due_dated_row, find_due_row, find_stuck_posting, mark_posting,
+    record_result, row_fields,
 )
 from src.slots import due_slots
 from src.youtube_client import post as yt_post
@@ -77,8 +78,12 @@ def _publish(notion, page, platform, dry_run) -> str:
 
 
 def run_tick(cfg, env, notion, now, dry_run=False, force=False) -> int:
-    """--force posts the oldest Ready row for every configured platform
-    immediately (manual 'post now' lever); slots remain the unattended default."""
+    """Two publishing passes per tick. DATED pass (every tick): rows with a
+    Publish Date & Time post at the first tick at/after their moment, ignoring
+    the slot schedule. SLOT pass: undated rows drain oldest-first at due slots.
+    --force posts the oldest undated Ready row for every configured platform
+    immediately (manual 'post now' lever) — it never yanks a future-dated row
+    (those are deliberate holds; the dated pass already covers overdue ones)."""
     failures, lines = [], []
 
     try:
@@ -97,6 +102,22 @@ def run_tick(cfg, env, notion, now, dry_run=False, force=False) -> int:
                           "to Posted Links BEFORE re-Ready (else it will re-post); "
                           "if absent, just re-Ready.")
             failures.append(f"STUCK row '{title}' was in Posting")
+
+        # Dated pass: EVERY tick (force or not), every configured pair — a
+        # dated row posts at the first tick at/after its moment, any day/hour.
+        for project, pcfg in cfg.items():
+            if project not in env["project_names"]:
+                continue  # flagged by the slot/force loop below on its due days
+            notion_project = env["project_names"][project]
+            for platform in pcfg["platforms"]:
+                page = find_due_dated_row(notion, env["db_id"], notion_project,
+                                          platform, now)
+                if page is None:
+                    continue  # nothing overdue: silent skip by design
+                try:
+                    lines.append(_publish(notion, page, platform, dry_run))
+                except Exception as e:  # noqa: BLE001
+                    failures.append(f"FAILED {project}->{platform}: {e}")
 
         if force:
             pairs = [(proj, plat) for proj, pcfg in cfg.items()
