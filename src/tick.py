@@ -1,7 +1,10 @@
-"""The scheduler tick. Deliberately dumb: config says what's due, Notion holds
-all state, the platform clients do all platform work. Run by a GitHub Actions
-cron every 15 min; a non-zero exit + printed summary is the SMS trigger. --dry-run
-logs what WOULD post and touches nothing."""
+"""The scheduler tick. Deliberately dumb: each row's Publish Date & Time says
+when it's due, Notion holds all state, the platform clients do all platform
+work. Run by a GitHub Actions cron every 15 min (delivered roughly hourly) —
+the cron is the date-checker heartbeat. Undated Ready rows park indefinitely
+(intentional; --force is the manual lever that drains them). A non-zero exit +
+printed summary is the SMS trigger. --dry-run logs what WOULD post and touches
+nothing."""
 import argparse
 import os
 import sys
@@ -19,7 +22,6 @@ from src.queue_client import (
     find_due_dated_row, find_due_row, find_stuck_posting, mark_posting,
     record_result, row_fields,
 )
-from src.slots import due_slots
 from src.youtube_client import post as yt_post
 
 STUCK_AGE = timedelta(hours=1)  # a Posting row younger than this may be a live tick
@@ -51,8 +53,8 @@ REQUIRED_ENV = {
 def _publish(notion, page, platform, dry_run) -> str:
     """Publish one row to one platform. Returns the summary line."""
     if platform not in PLATFORM_POSTERS:
-        # Row stays Ready; the FAILED line fires once per due slot (daily per
-        # platform) until the config is fixed.
+        # Row stays Ready; the FAILED line fires on every tick while a row is
+        # due for the platform, until the config is fixed.
         raise ValueError(f"platform '{platform}' is in channels.yaml "
                          f"but has no poster client")
     fields = row_fields(page)
@@ -78,12 +80,12 @@ def _publish(notion, page, platform, dry_run) -> str:
 
 
 def run_tick(cfg, env, notion, now, dry_run=False, force=False) -> int:
-    """Two publishing passes per tick. DATED pass (every tick): rows with a
-    Publish Date & Time post at the first tick at/after their moment, ignoring
-    the slot schedule. SLOT pass: undated rows drain oldest-first at due slots.
-    --force posts the oldest undated Ready row for every configured platform
-    immediately (manual 'post now' lever) — it never yanks a future-dated row
-    (those are deliberate holds; the dated pass already covers overdue ones)."""
+    """Date-driven publishing: a row posts at the first tick at/after its
+    Publish Date & Time (runs are roughly hourly). Undated Ready rows PARK
+    indefinitely — intentional, not an error. --force is the manual lever: it
+    additionally posts the oldest undated Ready row for every configured
+    platform immediately — it never yanks a future-dated row (those are
+    deliberate holds; the dated pass already covers overdue ones)."""
     failures, lines = [], []
 
     try:
@@ -103,11 +105,13 @@ def run_tick(cfg, env, notion, now, dry_run=False, force=False) -> int:
                           "if absent, just re-Ready.")
             failures.append(f"STUCK row '{title}' was in Posting")
 
-        # Dated pass: EVERY tick (force or not), every configured pair — a
-        # dated row posts at the first tick at/after its moment, any day/hour.
+        # Dated pass: EVERY tick, every configured (project, platform) pair —
+        # a dated row posts at the first tick at/after its moment.
         for project, pcfg in cfg.items():
             if project not in env["project_names"]:
-                continue  # flagged by the slot/force loop below on its due days
+                failures.append(f"CONFIG: project '{project}' missing from "
+                                f"project_names mapping")
+                continue
             notion_project = env["project_names"][project]
             for platform in pcfg["platforms"]:
                 page = find_due_dated_row(notion, env["db_id"], notion_project,
@@ -120,23 +124,22 @@ def run_tick(cfg, env, notion, now, dry_run=False, force=False) -> int:
                     failures.append(f"FAILED {project}->{platform}: {e}")
 
         if force:
-            pairs = [(proj, plat) for proj, pcfg in cfg.items()
-                     for plat in pcfg["platforms"]]  # every configured pair, slots ignored
-        else:
-            pairs = due_slots(cfg, now)
-        for project, platform in pairs:
-            if project not in env["project_names"]:
-                failures.append(f"CONFIG: project '{project}' missing from "
-                                f"project_names mapping")
-                continue
-            notion_project = env["project_names"][project]
-            page = find_due_row(notion, env["db_id"], notion_project, platform)
-            if page is None:
-                continue  # empty queue: silent skip by design
-            try:
-                lines.append(_publish(notion, page, platform, dry_run))
-            except Exception as e:  # noqa: BLE001
-                failures.append(f"FAILED {project}->{platform}: {e}")
+            # Force's exclusive lane: drain the oldest UNDATED Ready row per
+            # pair (find_due_row filters dated rows out server-side — a
+            # future date is a deliberate hold force must not break).
+            for project, pcfg in cfg.items():
+                if project not in env["project_names"]:
+                    continue  # already flagged by the dated pass above
+                notion_project = env["project_names"][project]
+                for platform in pcfg["platforms"]:
+                    page = find_due_row(notion, env["db_id"], notion_project,
+                                        platform)
+                    if page is None:
+                        continue  # empty queue: silent skip by design
+                    try:
+                        lines.append(_publish(notion, page, platform, dry_run))
+                    except Exception as e:  # noqa: BLE001
+                        failures.append(f"FAILED {project}->{platform}: {e}")
     except Exception as e:  # noqa: BLE001 — SMS contract: always print, always exit 1
         print(f"TICK CRASHED: {e}")
         return 1

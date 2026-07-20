@@ -15,7 +15,7 @@ clients; tick runs on GitHub Actions cron ($0/mo); watchdog on Zo reads the work
 run status via GitHub API (useful-math pattern). Spec + plan updated (see Pivot sections).
 
 ## Next
-Merge day-of-week-slots PR (Sun/Tue/Thu 00:00 ET schedule — AutoShorts cadence parity). Ted: Human items below (YouTube creds = long pole). Then: dispatch tick dry-run, create Post Queue DB, first supervised posts (Phase 3).
+Merge remove-slot-schedule PR (slots deleted — posting is purely date-driven via Publish Date & Time; undated rows park, --force is the manual lever). Then: release Neena (set her row's Publish Date & Time), drop Karl, and watch the first dated post land. Ted: Human items below (YouTube creds = long pole).
 
 ## Human
 - Google Cloud project + YouTube Data API OAuth creds for @Useful_Math; run scripts/get_youtube_token.py once for the refresh token; set the OAuth app to PRODUCTION status (else refresh tokens die in 7 days). SLOWEST item — start now

@@ -3,10 +3,10 @@
 ## What / Why
 
 A universal posting plug — a power outlet for content. Any of Ted's projects (the
-appliances) plugs a finished asset into the **Post Queue** (a Notion database); scheduled
-slots then publish it via direct YouTube / Instagram API clients running on a GitHub
-Actions cron. Consumers never touch platform credentials or upload code — they copy one
-adapter file and call `enqueue()`.
+appliances) plugs a finished asset into the **Post Queue** (a Notion database); each row's
+**Publish Date & Time** then publishes it via direct YouTube / Instagram API clients
+running on a GitHub Actions cron. Consumers never touch platform credentials or upload
+code — they copy one adapter file and call `enqueue()`.
 
 Why it exists: every content pipeline (Useful Math, Super Psychology, Athena,
 KontentMaschine, future carousel engines) ends at the same wall — "asset is done, now
@@ -23,8 +23,8 @@ the Pivot section of `docs/superpowers/specs/2026-07-07-cross-platform-poster-de
   the watchdog. No servers, no containers.
 - **Scheduled workflows run only on the default branch.** Nothing posts (and the watchdog
   alarms "no completed tick run") until the code is merged to `main`.
-- **GitHub throttles the */15 cron to roughly hourly**, so slots match on the local HOUR:
-  a slot fires on the first run within its hour (the configured minute is advisory).
+- **GitHub throttles the */15 cron to roughly hourly**, so a dated row posts up to ~an
+  hour after its Publish Date & Time (the cron is the date-checker heartbeat).
 - **Asset URLs must be PUBLICLY fetchable.** Instagram's API downloads the video itself
   from the URL in the row — a private URL fails the container step every time.
 - **IG long-lived tokens expire after ~60 days.** The `Refresh IG Token` workflow rotates
@@ -92,21 +92,23 @@ How a row flows:
 1. A producing project's copied adapter calls `enqueue(...)` when an asset is finished.
    `gate="auto"` rows land as `Ready`; `gate="gated"` rows land as `Awaiting Approval`.
 2. Gated rows wait in the "🙋 Awaiting Approval" view until Ted flips Status to `Ready`.
-3. At the next due slot for that project+platform (see `channels.yaml`), the tick posts
-   the oldest eligible `Ready` row to that platform. Rows with a **Publish Date & Time**
-   don't ride the slots — see "Scheduling a specific date & time" below.
+3. When the row's **Publish Date & Time** arrives, the tick posts it to each tagged
+   platform — see "How posting is scheduled" below. Undated `Ready` rows park until
+   forced.
 4. **Posted Links** collects one `platform: url` line per successful platform; when every
    tagged platform has a link, the row becomes `Posted`.
 
-### Scheduling a specific date & time
+### How posting is scheduled
 
-Set the **Publish Date & Time** property (date WITH time) on the Video Production row
-before approving — or directly on the Post Queue row. A dated row ignores the Sun/Tue/Thu
-slot schedule entirely: it posts at the first tick run at/after its moment, any day, any
-hour (runs are roughly hourly, so expect up to ~an hour of drift past the set time).
-Slots never drain a dated row early, and `--force` never yanks a future-dated one — a
-future date is a deliberate hold. Leave the property empty and the row rides the normal
-schedule (oldest-first at slots), exactly as before.
+Posting is purely date-driven: the **Publish Date & Time** property (date WITH time) on
+the row is the entire schedule. Set it on the Video Production row before approving — or
+directly on the Post Queue row. A dated `Ready` row posts at the first tick run at/after
+its moment, any day, any hour (runs are roughly hourly, so expect up to ~an hour of drift
+past the set time). A future date is a deliberate hold — nothing, including `--force`,
+posts it early.
+
+A `Ready` row with NO date **parks indefinitely** — intentional, not an error, no alarm.
+Parked rows post only via the manual `--force` lever (below) or by giving them a date.
 
 Timezone: pick the datetime in Notion as usual. If the value carries no timezone
 (Notion "floating" time), the poster interprets it as **America/New_York**.
@@ -124,12 +126,12 @@ Manual operations:
 
 ### Post now (manual override)
 
-Publishes the **oldest** `Ready` row per configured platform immediately, ignoring slot
-times. All the same safety rails apply (env-secret check, Posted Links double-post
-protection, stuck sweep, dry-run compose). Force covers undated rows AND overdue-dated
-rows (the dated pass runs on every tick anyway) — but it never publishes a
-**future-dated** row: a Publish Date & Time in the future is a deliberate hold that only
-its moment arriving (or clearing the property) releases.
+Publishes the **oldest** undated-or-overdue `Ready` row per configured platform
+immediately. All the same safety rails apply (env-secret check, Posted Links double-post
+protection, stuck sweep, dry-run compose). Force is the only way parked (undated) rows
+post; it also covers overdue-dated rows (the dated pass runs on every tick anyway) — but
+it never publishes a **future-dated** row: a Publish Date & Time in the future is a
+deliberate hold that only its moment arriving (or clearing the property) releases.
 
 - **Actions UI**: repo → Actions → "Post Queue Tick" → Run workflow → check *force*.
 - **CLI**:
@@ -147,12 +149,12 @@ This is the instruction guide for plugging ANYTHING into the poster.
    repos. Add your repo to **Used By** below.
 2. When an asset is finished, call
    `enqueue(client, db_id, project=..., title=..., asset_urls=[...], caption=..., platforms=[...], gate="auto"|"gated")`.
-   Optional `publish_at=` (ISO datetime string) schedules the row for a specific
-   moment instead of the slot schedule.
+   `publish_at=` (ISO datetime string) schedules the row for a specific moment;
+   omit it and the row parks until manually forced.
 3. Asset URLs must be PUBLICLY downloadable (Instagram fetches them directly;
    YouTube's client downloads then uploads — set `ASSET_STORE_TOKEN` only if
    your store needs its X-Token header for the YouTube path).
-4. Add your project's slots to `channels.yaml` and its Notion name to
+4. Add your project's platform list to `channels.yaml` and its Notion name to
    `project_names` in `src/tick.py` `main()` (PR to this repo).
 
 **The Useful Math 3B contract (binding on Descript assembly work):**
@@ -177,26 +179,24 @@ This is the instruction guide for plugging ANYTHING into the poster.
 | Caption | text | Platform-ready caption incl. hashtags |
 | Platforms | multi-select | `youtube-shorts`, `ig-reels`, `ig-carousel`, `linkedin`, … |
 | Status | select | `Awaiting Approval` → `Ready` → `Posting` → `Posted` / `Failed` |
-| Publish Date & Time | date (with time) | Optional. Set = post at the first tick at/after this moment (slots don't apply, `--force` won't yank it early). Empty = ride the slot schedule. Floating (no-timezone) values are read as America/New_York |
+| Publish Date & Time | date (with time) | THE schedule. Set = post at the first tick at/after this moment (`--force` won't yank it early). Empty = park indefinitely until forced. Floating (no-timezone) values are read as America/New_York |
 | Posted Links | text | Permalinks per platform (`platform: url` lines), stamped by the tick |
 | Error | text | Failure detail, stamped by the tick |
 | (created time) | built-in | Drives oldest-first draining — Notion's automatic timestamp, no column needed |
 
 **Tick** (`src/tick.py`, GitHub Actions cron every 15 min — delivered roughly hourly by
-GH throttling): compares the tick's local HOUR against each slot's hour in that slot's
-own timezone, so a slot fires on the first run within its hour (or only on the slot's
-`days` weekdays, when configured). Before the slot pass, a **dated pass** runs on every
-tick: for each configured project+platform it publishes the earliest overdue row whose
-**Publish Date & Time** is at/before now (dated rows are excluded from the slot pass
-server-side, so slots can never drain them early). Then, for each due project+platform,
-it takes the oldest undated `Ready` row tagged with that platform and not yet in its
-Posted Links, fails fast if any required secret is missing or empty (GH Actions maps unset
-secrets to empty strings — the row is left `Ready`), marks the row `Posting`, dispatches
-to the platform client, and stamps the result: success writes the permalink into Posted
-Links per platform (the row returns to `Ready` until ALL tagged platforms are done, then
-`Posted`); any failure writes `Failed` + the Error field. It also sweeps rows sitting in
-`Posting` for over an hour (a crashed tick) into `Failed` with a recovery note. A
-non-zero exit + printed summary is what the watchdog turns into an SMS.
+GH throttling): on every tick, a **dated pass** publishes, for each configured
+project+platform, the earliest `Ready` row whose **Publish Date & Time** is at/before
+now and whose platform is not yet in its Posted Links. Undated `Ready` rows are never
+touched by the automatic pass (they park); `--force` additionally drains the oldest
+undated row per pair. For each row it publishes, the tick fails fast if any required
+secret is missing or empty (GH Actions maps unset secrets to empty strings — the row is
+left `Ready`), marks the row `Posting`, dispatches to the platform client, and stamps the
+result: success writes the permalink into Posted Links per platform (the row returns to
+`Ready` until ALL tagged platforms are done, then `Posted`); any failure writes `Failed`
++ the Error field. It also sweeps rows sitting in `Posting` for over an hour (a crashed
+tick) into `Failed` with a recovery note. A non-zero exit + printed summary is what the
+watchdog turns into an SMS.
 
 **Platform clients** — each exposes one `post(...) -> permalink` function; adding a
 platform = one client module + one registry entry in `src/tick.py`.
@@ -226,7 +226,7 @@ Ted; SMS logic stays out of the GitHub Action.
                         ▼                                ▼
               Awaiting Approval ──Ted flips──────────▶ Ready ◀────────────┐
                                                          │                │
-                                                    due slot              │ more platforms
+                                            date due (or --force)         │ more platforms
                                                          ▼                │ still untagged
                                                       Posting ────────────┤
                                                          │                │
@@ -240,24 +240,17 @@ Ted; SMS logic stays out of the GitHub Action.
 
 ## Configuration
 
-**`channels.yaml`** — slots ONLY; the approval gate lives in each project's copied
+**`channels.yaml`** — which platforms each project posts to, nothing more. Scheduling
+lives on each row's Publish Date & Time; the approval gate lives in each project's copied
 adapter call, never here:
 
 ```yaml
 useful-math:
-  platforms:
-    youtube-shorts: { slot: "00:00", tz: "America/New_York", cadence: daily, days: [sun, tue, thu] }
-    ig-reels:       { slot: "00:00", tz: "America/New_York", cadence: daily, days: [sun, tue, thu] }
+  platforms: [youtube-shorts, ig-reels]
 ```
 
-Slots must be zero-padded `HH:MM`, quantized to `:00/:15/:30/:45`, with a valid IANA
-timezone; `cadence` currently only accepts `daily`. `days` is optional: a list of
-weekdays (`mon`/`tue`/`wed`/`thu`/`fri`/`sat`/`sun`, no duplicates) the slot fires on,
-evaluated in the slot's own timezone; omit it and the slot fires every day.
+`platforms` must be a non-empty list of platform-slug strings;
 `src/config_loader.py` rejects anything else at startup.
-
-Useful Math posts Sun/Tue/Thu at 00:00 ET (midnight) — the same cadence its AutoShorts
-series ran on.
 
 **Environment variables / secrets** (`.env.example` mirrors this, with one exception:
 `ADMIN_PAT` is workflow-only — consumed by `gh` in `refresh-ig-token.yml`, never by
@@ -279,14 +272,13 @@ Python — so it's a GH secret only and not in `.env.example`):
 secrets (`REQUIRED_ENV` in `src/tick.py`) and raises if any is missing or EMPTY — GH
 Actions maps an unset secret to an empty string, which would otherwise fail cryptically
 mid-upload and burn the queue row. The row stays `Ready`; the printed `FAILED` line
-fires once per due slot (per platform, on that slot's scheduled days) until the secret
-is set.
+fires on every tick while a row is due (per platform) until the secret is set.
 
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `FAILED ...: missing or empty env secret(s): ...` at each due slot | GH repo secret unset (Actions maps unset → empty string) | Set the listed secrets in Settings → Secrets; row is still `Ready`, no action on it needed |
+| `FAILED ...: missing or empty env secret(s): ...` on each tick with a due row | GH repo secret unset (Actions maps unset → empty string) | Set the listed secrets in Settings → Secrets; row is still `Ready`, no action on it needed |
 | Row `Failed`, Error shows an IG message with `***` in it | Token sanitized out of an IG API error: asset URL not publicly fetchable, invalid/expired token, or IG couldn't process the video | Verify the asset URL opens in a private browser window; check token validity; re-Ready after fixing |
 | Row stuck in `Posting` | Tick crashed mid-flight; the >1h sweep will mark it `Failed` with a recovery note | If the post EXISTS on the platform, add `platform: url` to Posted Links BEFORE re-Ready (else it re-posts); if absent, just re-Ready |
 | SMS: `N failed tick run(s) in the last 90 min: <run-url>` | A tick run exited non-zero | Open the run URL, read the last `FAILED`/`TICK CRASHED` line, then match it against the other rows in this table |
@@ -297,17 +289,16 @@ is set.
 
 ## Legend
 
-**Status values**: `Awaiting Approval` (gated, waiting for Ted) → `Ready` (eligible at
-the next due slot) → `Posting` (a tick is working it) → `Posted` (all platforms stamped)
-/ `Failed` (see Error field).
+**Status values**: `Awaiting Approval` (gated, waiting for Ted) → `Ready` (posts when
+its Publish Date & Time arrives; parked if undated) → `Posting` (a tick is working it) →
+`Posted` (all platforms stamped) / `Failed` (see Error field).
 
 **Platform slugs**: `youtube-shorts`, `ig-reels` (live) · `ig-carousel`, `linkedin`
 (schema only — no client yet, do not tag).
 
 **File map**:
 
-- `src/tick.py` — the scheduler tick: due slots → due rows → platform clients → stamp results (`python -m src.tick [--dry-run]`)
-- `src/slots.py` — which project+platform slots are due at this tick (hour-wide matching)
+- `src/tick.py` — the scheduler tick: due dated rows → platform clients → stamp results (`python -m src.tick [--dry-run] [--force]`)
 - `src/config_loader.py` — load + validate `channels.yaml`
 - `src/queue_client.py` — all reads/writes against the Post Queue Notion DB (scheduler-side schema)
 - `src/assets.py` — download asset URLs to temp files (optional X-Token header)
@@ -320,5 +311,5 @@ the next due slot) → `Posting` (a tick is working it) → `Posted` (all platfo
 - `setup_notion.py` — one-time creation of the Post Queue DB (prints `POST_QUEUE_DB_ID`)
 - `.github/workflows/tick.yml` — "Post Queue Tick": 15-min cron + manual dispatch with `dry_run`
 - `.github/workflows/refresh-ig-token.yml` — "Refresh IG Token": monthly (5th, 09:00 UTC), rotates the secret via `ADMIN_PAT`
-- `channels.yaml` — publish slots per project+platform (slots only — gate lives in the adapter)
+- `channels.yaml` — target platforms per project (list only — scheduling lives on the rows, gate lives in the adapter)
 - `.env.example` — annotated list of every secret/env var

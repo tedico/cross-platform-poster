@@ -138,7 +138,7 @@ def test_row_fields_publish_at_present():
 
 
 def test_find_due_row_filters_out_dated_rows():
-    """The slot flow must never drain a dated row — server-side is_empty."""
+    """--force must never drain a dated row — server-side is_empty."""
     client = MagicMock()
     client.databases.query.return_value = {"results": []}
     find_due_row(client, "db1", "Useful Math", "youtube-shorts")

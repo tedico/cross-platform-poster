@@ -12,7 +12,7 @@ on:
         type: boolean
         default: false
       force:
-        description: 'Post now: publish the oldest Ready row per platform immediately (ignores slot times)'
+        description: 'Post now: publish the oldest undated Ready row per platform immediately (never a future-dated row)'
         type: boolean
         default: false
 concurrency:

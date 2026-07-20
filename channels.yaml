@@ -1,6 +1,4 @@
-# Slots ONLY. Approval gate (auto/gated) is owned by each project's copied adapter.
-# Slot times quantize to :00/:15/:30/:45 (scheduler ticks every 15 minutes).
+# Projects and their target platforms. Scheduling lives on each row's
+# "Publish Date & Time" (Notion) — no fixed slots.
 useful-math:
-  platforms:
-    youtube-shorts: { slot: "00:00", tz: "America/New_York", cadence: daily, days: [sun, tue, thu] }
-    ig-reels:       { slot: "00:00", tz: "America/New_York", cadence: daily, days: [sun, tue, thu] }
+  platforms: [youtube-shorts, ig-reels]

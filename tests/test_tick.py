@@ -4,10 +4,8 @@ from unittest.mock import MagicMock
 
 from src.tick import run_tick
 
-CFG = {"useful-math": {"platforms": {
-    "youtube-shorts": {"slot": "12:00", "tz": "America/New_York", "cadence": "daily"},
-}}}
-NOW = datetime(2026, 7, 8, 16, 0, tzinfo=timezone.utc)  # 12:00 EDT
+CFG = {"useful-math": {"platforms": ["youtube-shorts"]}}
+NOW = datetime(2026, 7, 8, 16, 0, tzinfo=timezone.utc)
 ENV = {"db_id": "db1", "project_names": {"useful-math": "Useful Math"}}
 POSTER_ENV = {
     "YT_CLIENT_ID": "cid", "YT_CLIENT_SECRET": "csec", "YT_REFRESH_TOKEN": "rtok",
@@ -15,8 +13,8 @@ POSTER_ENV = {
 }
 
 
-def _row(platforms=("youtube-shorts",)):
-    return {
+def _row(platforms=("youtube-shorts",), publish_at=None):
+    row = {
         "id": "p1",
         "last_edited_time": "2026-07-08T14:00:00.000Z",  # 2h before NOW -> stuck-sweepable
         "properties": {
@@ -31,11 +29,16 @@ def _row(platforms=("youtube-shorts",)):
             "Error": {"rich_text": []},
         },
     }
+    if publish_at is not None:
+        row["properties"]["Publish Date & Time"] = {"date": {"start": publish_at}}
+    return row
 
 
 def _wire(mocker, row):
-    mocker.patch("src.tick.find_due_row", return_value=row)
-    mocker.patch("src.tick.find_due_dated_row", return_value=None)
+    """Default wiring: the row is DUE BY DATE (the only automatic lane now);
+    the undated finder is empty."""
+    mocker.patch("src.tick.find_due_dated_row", return_value=row)
+    mocker.patch("src.tick.find_due_row", return_value=None)
     mocker.patch("src.tick.find_stuck_posting", return_value=[])
     mocker.patch("src.tick.download_assets", return_value=["/tmp/hua.mp4"])
     mocker.patch.dict(os.environ, POSTER_ENV)
@@ -48,7 +51,7 @@ def _wire(mocker, row):
     return mark, record, yt, ig
 
 
-def test_happy_path_posts_and_records(mocker, tmp_path):
+def test_happy_path_dated_row_posts_and_records(mocker, tmp_path):
     mark, record, yt, ig = _wire(mocker, _row())
     code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW, dry_run=False)
     assert code == 0
@@ -58,10 +61,23 @@ def test_happy_path_posts_and_records(mocker, tmp_path):
 
 
 def test_empty_queue_is_silent_success(mocker, tmp_path):
-    mocker.patch("src.tick.find_due_row", return_value=None)
+    mocker.patch("src.tick.find_due_dated_row", return_value=None)
     mocker.patch("src.tick.find_stuck_posting", return_value=[])
     code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW, dry_run=False)
     assert code == 0
+
+
+def test_undated_ready_rows_park_without_force(mocker, tmp_path):
+    """No date, no force -> the row parks indefinitely: the undated finder is
+    never even consulted on a normal tick. Intentional, not an error."""
+    mocker.patch("src.tick.find_due_dated_row", return_value=None)
+    undated = mocker.patch("src.tick.find_due_row", return_value=_row())
+    mocker.patch("src.tick.find_stuck_posting", return_value=[])
+    mark = mocker.patch("src.tick.mark_posting")
+    code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW, dry_run=False)
+    assert code == 0
+    undated.assert_not_called()
+    mark.assert_not_called()
 
 
 def test_poster_failure_records_error_and_exits_nonzero(mocker, tmp_path):
@@ -82,12 +98,19 @@ def test_dry_run_never_touches_platforms_or_status(mocker, tmp_path):
     record.assert_not_called()
 
 
-def test_force_posts_outside_slot_time(mocker, tmp_path):
-    """--force ignores slot times: at 03:07 UTC (nowhere near the 12:00 EDT
-    slot) the oldest Ready row still posts."""
-    mark, record, yt, ig = _wire(mocker, _row())
-    off_slot = datetime(2026, 7, 8, 3, 7, tzinfo=timezone.utc)
-    code = run_tick(CFG, ENV, notion=MagicMock(), now=off_slot,
+def test_force_posts_undated_row_immediately(mocker, tmp_path):
+    """--force is the manual lever for parked (undated) rows: the oldest
+    undated Ready row posts right now."""
+    mocker.patch("src.tick.find_due_dated_row", return_value=None)
+    mocker.patch("src.tick.find_due_row", return_value=_row())
+    mocker.patch("src.tick.find_stuck_posting", return_value=[])
+    mocker.patch("src.tick.download_assets", return_value=["/tmp/hua.mp4"])
+    mocker.patch.dict(os.environ, POSTER_ENV)
+    mocker.patch("src.tick.mark_posting")
+    record = mocker.patch("src.tick.record_result")
+    yt = mocker.patch("src.tick.yt_post",
+                      return_value="https://youtube.com/shorts/vid1")
+    code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW,
                     dry_run=False, force=True)
     assert code == 0
     yt.assert_called_once()
@@ -96,9 +119,15 @@ def test_force_posts_outside_slot_time(mocker, tmp_path):
 
 def test_force_with_dry_run_touches_nothing(mocker, tmp_path):
     """force + dry-run composes: previews what WOULD post now, touches nothing."""
-    mark, record, yt, ig = _wire(mocker, _row())
-    off_slot = datetime(2026, 7, 8, 3, 7, tzinfo=timezone.utc)
-    code = run_tick(CFG, ENV, notion=MagicMock(), now=off_slot,
+    mocker.patch("src.tick.find_due_dated_row", return_value=None)
+    mocker.patch("src.tick.find_due_row", return_value=_row())
+    mocker.patch("src.tick.find_stuck_posting", return_value=[])
+    mocker.patch.dict(os.environ, POSTER_ENV)
+    mark = mocker.patch("src.tick.mark_posting")
+    record = mocker.patch("src.tick.record_result")
+    yt = mocker.patch("src.tick.yt_post")
+    ig = mocker.patch("src.tick.ig_post")
+    code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW,
                     dry_run=True, force=True)
     assert code == 0
     yt.assert_not_called()
@@ -107,30 +136,10 @@ def test_force_with_dry_run_touches_nothing(mocker, tmp_path):
     record.assert_not_called()
 
 
-def test_dated_row_posts_outside_slot_schedule(mocker, tmp_path):
-    """A row with a Publish Date & Time posts at the first tick at/after its
-    moment — 03:07 UTC on a non-slot hour, nowhere near the 12:00 EDT slot."""
-    mocker.patch("src.tick.find_due_dated_row", return_value=_row())
-    undated = mocker.patch("src.tick.find_due_row", return_value=None)
-    mocker.patch("src.tick.find_stuck_posting", return_value=[])
-    mocker.patch("src.tick.download_assets", return_value=["/tmp/hua.mp4"])
-    mocker.patch.dict(os.environ, POSTER_ENV)
-    mocker.patch("src.tick.mark_posting")
-    record = mocker.patch("src.tick.record_result")
-    yt = mocker.patch("src.tick.yt_post",
-                      return_value="https://youtube.com/shorts/vid1")
-    off_slot = datetime(2026, 7, 8, 3, 7, tzinfo=timezone.utc)
-    code = run_tick(CFG, ENV, notion=MagicMock(), now=off_slot, dry_run=False)
-    assert code == 0
-    yt.assert_called_once()
-    assert record.call_args.kwargs["url"] == "https://youtube.com/shorts/vid1"
-    undated.assert_not_called()  # no slot due at 03:07 UTC — dated pass only
-
-
 def test_force_never_yanks_future_dated_row(mocker, tmp_path):
     """--force is 'post the queue now', not 'break my scheduled holds': the
-    dated pass returns only OVERDUE rows (here: none), and the force pair loop
-    still drains via find_due_row (undated-only) — a future-dated row is never
+    dated pass returns only OVERDUE rows (here: none), and force's own lane
+    drains via find_due_row (undated-only) — a future-dated row is never
     touched."""
     dated = mocker.patch("src.tick.find_due_dated_row", return_value=None)
     undated = mocker.patch("src.tick.find_due_row", return_value=None)
@@ -147,7 +156,7 @@ def test_force_never_yanks_future_dated_row(mocker, tmp_path):
 
 
 def test_stuck_posting_row_exits_nonzero(mocker, tmp_path):
-    mocker.patch("src.tick.find_due_row", return_value=None)
+    mocker.patch("src.tick.find_due_dated_row", return_value=None)
     mocker.patch("src.tick.find_stuck_posting", return_value=[_row()])
     record = mocker.patch("src.tick.record_result")
     code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW, dry_run=False)
@@ -158,7 +167,7 @@ def test_stuck_posting_row_exits_nonzero(mocker, tmp_path):
 def test_fresh_posting_row_not_swept(mocker, tmp_path):
     row = _row()
     row["last_edited_time"] = "2026-07-08T15:50:00.000Z"  # 10 min before NOW
-    mocker.patch("src.tick.find_due_row", return_value=None)
+    mocker.patch("src.tick.find_due_dated_row", return_value=None)
     mocker.patch("src.tick.find_stuck_posting", return_value=[row])
     record = mocker.patch("src.tick.record_result")
     code = run_tick(CFG, ENV, notion=MagicMock(), now=NOW, dry_run=False)
@@ -169,7 +178,7 @@ def test_fresh_posting_row_not_swept(mocker, tmp_path):
 def test_missing_env_secret_fails_before_marking(mocker, tmp_path, capsys):
     """GH Actions maps an unset secret to an empty string; either way the tick
     must fail BEFORE mark_posting so the row stays Ready."""
-    mocker.patch("src.tick.find_due_row", return_value=_row())
+    mocker.patch("src.tick.find_due_dated_row", return_value=_row())
     mocker.patch("src.tick.find_stuck_posting", return_value=[])
     mocker.patch("src.tick.download_assets", return_value=["/tmp/hua.mp4"])
     mocker.patch.dict(os.environ, {}, clear=True)  # no YT_* secrets at all
@@ -195,10 +204,9 @@ def test_notion_outage_prints_crash_line(mocker, tmp_path, capsys):
 def test_unknown_platform_fails_before_marking(mocker, tmp_path, capsys):
     """A platform in channels.yaml with no poster client: FAILED line + exit 1,
     but the row is untouched (stays Ready) — no mark_posting, no record_result."""
-    cfg = {"useful-math": {"platforms": {
-        "linkedin": {"slot": "12:00", "tz": "America/New_York", "cadence": "daily"},
-    }}}
-    mocker.patch("src.tick.find_due_row", return_value=_row(platforms=("linkedin",)))
+    cfg = {"useful-math": {"platforms": ["linkedin"]}}
+    mocker.patch("src.tick.find_due_dated_row",
+                 return_value=_row(platforms=("linkedin",)))
     mocker.patch("src.tick.find_stuck_posting", return_value=[])
     mark = mocker.patch("src.tick.mark_posting")
     record = mocker.patch("src.tick.record_result")
@@ -207,6 +215,17 @@ def test_unknown_platform_fails_before_marking(mocker, tmp_path, capsys):
     mark.assert_not_called()
     record.assert_not_called()
     assert "no poster client" in capsys.readouterr().out
+
+
+def test_missing_project_name_flags_config_line(mocker, tmp_path, capsys):
+    """A channels.yaml project with no project_names mapping: CONFIG line +
+    exit 1 on every tick until fixed (the dated pass owns this check now)."""
+    cfg = {"mystery-project": {"platforms": ["youtube-shorts"]}}
+    mocker.patch("src.tick.find_due_dated_row", return_value=None)
+    mocker.patch("src.tick.find_stuck_posting", return_value=[])
+    code = run_tick(cfg, ENV, notion=MagicMock(), now=NOW, dry_run=False)
+    assert code == 1
+    assert "CONFIG: project 'mystery-project' missing" in capsys.readouterr().out
 
 
 def _fake_notion(page):
@@ -241,15 +260,15 @@ def _fake_notion(page):
     return notion
 
 
+OVERDUE = "2026-07-08T09:00:00.000-04:00"  # 13:00 UTC — 3h before NOW
+CFG_BOTH = {"useful-math": {"platforms": ["youtube-shorts", "ig-reels"]}}
+
+
 def test_same_row_two_platforms_one_tick(mocker, tmp_path):
-    """Flagship sequence: one Ready row targeting yt+ig, both slots due in the
-    same tick -> two posts, links accumulate, row lands on Posted. Exercises the
-    REAL queue_client (nothing from it is patched)."""
-    cfg = {"useful-math": {"platforms": {
-        "youtube-shorts": {"slot": "12:00", "tz": "America/New_York", "cadence": "daily"},
-        "ig-reels": {"slot": "12:00", "tz": "America/New_York", "cadence": "daily"},
-    }}}
-    page = _row(platforms=("youtube-shorts", "ig-reels"))
+    """Flagship sequence: one overdue dated Ready row targeting yt+ig -> the
+    dated pass posts both in the same tick, links accumulate, row lands on
+    Posted. Exercises the REAL queue_client (nothing from it is patched)."""
+    page = _row(platforms=("youtube-shorts", "ig-reels"), publish_at=OVERDUE)
     notion = _fake_notion(page)
     mocker.patch("src.tick.download_assets", return_value=["/tmp/hua.mp4"])
     mocker.patch.dict(os.environ, POSTER_ENV)
@@ -258,7 +277,7 @@ def test_same_row_two_platforms_one_tick(mocker, tmp_path):
     ig = mocker.patch("src.tick.ig_post",
                       return_value="https://www.instagram.com/reel/AB/")
 
-    code = run_tick(cfg, ENV, notion=notion, now=NOW, dry_run=False)
+    code = run_tick(CFG_BOTH, ENV, notion=notion, now=NOW, dry_run=False)
 
     assert code == 0
     yt.assert_called_once()
@@ -274,11 +293,7 @@ def test_partial_failure_preserves_posted_link_and_retries_only_failed(mocker, t
     """The double-post protection as one flow: yt posts, ig fails -> row Failed
     but the yt link is preserved; Ted re-Readies; the next tick retries ONLY ig
     (yt link in Posted Links = never re-posted). Real queue_client throughout."""
-    cfg = {"useful-math": {"platforms": {
-        "youtube-shorts": {"slot": "12:00", "tz": "America/New_York", "cadence": "daily"},
-        "ig-reels": {"slot": "12:00", "tz": "America/New_York", "cadence": "daily"},
-    }}}
-    page = _row(platforms=("youtube-shorts", "ig-reels"))
+    page = _row(platforms=("youtube-shorts", "ig-reels"), publish_at=OVERDUE)
     notion = _fake_notion(page)
     mocker.patch("src.tick.download_assets", return_value=["/tmp/hua.mp4"])
     mocker.patch.dict(os.environ, POSTER_ENV)
@@ -286,7 +301,7 @@ def test_partial_failure_preserves_posted_link_and_retries_only_failed(mocker, t
                       return_value="https://youtube.com/shorts/vid1")
     ig = mocker.patch("src.tick.ig_post", side_effect=Exception("ig down"))
 
-    code = run_tick(cfg, ENV, notion=notion, now=NOW, dry_run=False)
+    code = run_tick(CFG_BOTH, ENV, notion=notion, now=NOW, dry_run=False)
 
     assert code == 1
     assert page["properties"]["Status"]["select"]["name"] == "Failed"
@@ -299,7 +314,7 @@ def test_partial_failure_preserves_posted_link_and_retries_only_failed(mocker, t
     ig.side_effect = None
     ig.return_value = "https://www.instagram.com/reel/AB/"
 
-    code = run_tick(cfg, ENV, notion=notion, now=NOW, dry_run=False)
+    code = run_tick(CFG_BOTH, ENV, notion=notion, now=NOW, dry_run=False)
 
     assert code == 0
     assert page["properties"]["Status"]["select"]["name"] == "Posted"

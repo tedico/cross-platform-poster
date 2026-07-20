@@ -42,8 +42,9 @@ def parse_posted_links(text: str) -> dict:
 
 def find_due_row(client, db_id: str, project: str, platform: str):
     """Oldest UNDATED Ready row for project targeting platform, not yet posted
-    there. Dated rows (Publish Date & Time set) are deliberate holds — slots
-    never drain them; find_due_dated_row handles those."""
+    there. This is --force's lane: undated rows park until forced. Dated rows
+    (Publish Date & Time set) are deliberate holds — force never drains them;
+    find_due_dated_row handles those."""
     resp = client.databases.query(
         database_id=db_id,
         filter={"and": [
@@ -116,9 +117,9 @@ def record_result(client, page: dict, platform: str, url: str = None, error: str
     failure -> Failed; all platforms posted -> Posted; else back to Ready."""
     if url is None and error is None:
         raise ValueError("record_result needs url or error")
-    # Re-fetch: the caller's snapshot may be stale (another slot's tick may have
-    # stamped a link since); a stale snapshot would drop links and re-open
-    # already-posted platforms.
+    # Re-fetch: the caller's snapshot may be stale (an earlier platform in the
+    # same tick may have stamped a link since); a stale snapshot would drop
+    # links and re-open already-posted platforms.
     page = client.pages.retrieve(page_id=page["id"])
     fields = row_fields(page)
     if error is not None:
