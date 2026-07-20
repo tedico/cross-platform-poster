@@ -20,7 +20,10 @@ def due_slots(cfg: dict, now: datetime) -> list[tuple[str, str]]:
                                       second=0, microsecond=0)
             if quantized.strftime("%H:%M") != s["slot"]:
                 continue
-            if "days" in s and local.strftime("%a").lower() not in s["days"]:
+            # weekday() indexing, not strftime("%a") — %a is locale-dependent
+            # (e.g. de_DE yields "So", which never matches and silently skips)
+            weekday = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")[local.weekday()]
+            if "days" in s and weekday not in s["days"]:
                 continue
             due.append((project, platform))
     return due
