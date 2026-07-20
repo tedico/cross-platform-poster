@@ -132,8 +132,9 @@ failure → `Failed`; platforms already in `Posted Links` are never re-posted.
 
 ## Channel config — `channels.yaml`
 
-(Unchanged: slots only, adapter owns the gate.) Default UM slots 12:00 ET daily for both
-platforms.
+(Unchanged: slots only, adapter owns the gate.) UM slots Sun/Tue/Thu 00:00 ET for both
+platforms (AutoShorts cadence parity), via the optional per-platform `days:` list —
+absent `days:` means daily.
 
 **GitHub Actions cron jitter (accepted trade-off):** scheduled workflows can be delayed;
 if a run lands past its 15-min cell, that day's slot is skipped and the row simply posts
@@ -218,7 +219,7 @@ platform supervised live before its channel runs unattended.
 | Standalone vs embedded per-project | Standalone repo + copied adapters (Alexandria pattern) |
 | Handoff contract | Central Notion Post Queue DB owned by this project |
 | Approval gate | Per-project, owned by the adapter (`auto`/`gated`); UM = `auto` |
-| Publish timing | Per-channel slots; UM 12:00 ET daily; GH-cron jitter slot-skip accepted |
+| Publish timing | Per-channel slots + optional `days:` weekday filter; UM Sun/Tue/Thu 00:00 ET; GH-cron jitter slot-skip accepted |
 | v1 consumer/platforms | Useful Math → YouTube Shorts + IG Reels |
 | UM integration | Watcher adapter on the 3B final-video folder; `<person-slug>.mp4` naming contract |
 | Name / visibility | `cross-platform-poster`, public |

@@ -40,3 +40,43 @@ def test_evening_slot_in_local_tz():
 def test_rejects_naive_datetime():
     with pytest.raises(ValueError, match="aware"):
         due_slots(CFG, datetime(2026, 7, 8, 16, 0))
+
+
+DAYS_CFG = {
+    "useful-math": {
+        "platforms": {
+            "youtube-shorts": {"slot": "00:00", "tz": "America/New_York",
+                               "cadence": "daily", "days": ["sun"]},
+        }
+    }
+}
+
+
+def test_days_slot_due_on_listed_weekday():
+    # 2026-07-19 is a Sunday; 00:00 ET (EDT) == 04:00 UTC — same Sunday
+    now = datetime(2026, 7, 19, 4, 0, tzinfo=timezone.utc)
+    assert due_slots(DAYS_CFG, now) == [("useful-math", "youtube-shorts")]
+
+
+def test_days_slot_not_due_on_other_weekday():
+    # 2026-07-20 is a Monday; same local time, wrong day
+    now = datetime(2026, 7, 20, 4, 0, tzinfo=timezone.utc)
+    assert due_slots(DAYS_CFG, now) == []
+
+
+def test_days_evaluated_in_slot_timezone_not_utc():
+    # Weekday must come from the slot's OWN timezone. Sunday 00:00 ET is
+    # Sunday 04:00 UTC — a [sat] slot must NOT fire at that moment even
+    # though Saturday was the most recent UTC-adjacent day boundary.
+    sat_cfg = {
+        "useful-math": {
+            "platforms": {
+                "youtube-shorts": {"slot": "00:00", "tz": "America/New_York",
+                                   "cadence": "daily", "days": ["sat"]},
+            }
+        }
+    }
+    now = datetime(2026, 7, 19, 4, 0, tzinfo=timezone.utc)  # Sunday in ET and UTC
+    assert due_slots(sat_cfg, now) == []
+    # And the [sun] slot IS due at that exact instant (ET weekday wins)
+    assert due_slots(DAYS_CFG, now) == [("useful-math", "youtube-shorts")]
