@@ -6,6 +6,7 @@ import yaml
 
 VALID_MINUTES = {0, 15, 30, 45}
 VALID_CADENCES = {"daily"}
+VALID_DAYS = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
 
 
 class ConfigError(Exception):
@@ -52,4 +53,16 @@ def load_channels(path) -> dict:
             if s.get("cadence") not in VALID_CADENCES:
                 raise ConfigError(
                     f"{project}/{platform}: cadence must be one of {sorted(VALID_CADENCES)}")
+            if "days" in s:
+                days = s["days"]
+                if not isinstance(days, list) or not days:
+                    raise ConfigError(
+                        f"{project}/{platform}: 'days' must be a non-empty list")
+                for day in days:
+                    if not isinstance(day, str) or day not in VALID_DAYS:
+                        raise ConfigError(
+                            f"{project}/{platform}: bad day '{day}' (use mon/tue/wed/thu/fri/sat/sun)")
+                if len(set(days)) != len(days):
+                    raise ConfigError(
+                        f"{project}/{platform}: duplicate days in {days}")
     return cfg

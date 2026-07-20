@@ -67,3 +67,54 @@ def test_rejects_unknown_cadence(tmp_path):
     ))
     with pytest.raises(ConfigError, match="cadence"):
         load_channels(p)
+
+
+def test_accepts_valid_days_list(tmp_path):
+    p = _write(tmp_path, (
+        "useful-math:\n"
+        "  platforms:\n"
+        "    youtube-shorts: { slot: \"00:00\", tz: \"America/New_York\", cadence: daily, days: [sun, tue, thu] }\n"
+    ))
+    cfg = load_channels(p)
+    assert cfg["useful-math"]["platforms"]["youtube-shorts"]["days"] == ["sun", "tue", "thu"]
+
+
+def test_rejects_bad_day_name(tmp_path):
+    p = _write(tmp_path, (
+        "useful-math:\n"
+        "  platforms:\n"
+        "    youtube-shorts: { slot: \"00:00\", tz: \"America/New_York\", cadence: daily, days: [monday] }\n"
+    ))
+    with pytest.raises(ConfigError, match="bad day 'monday'"):
+        load_channels(p)
+
+
+def test_rejects_empty_days_list(tmp_path):
+    p = _write(tmp_path, (
+        "useful-math:\n"
+        "  platforms:\n"
+        "    youtube-shorts: { slot: \"00:00\", tz: \"America/New_York\", cadence: daily, days: [] }\n"
+    ))
+    with pytest.raises(ConfigError, match="non-empty"):
+        load_channels(p)
+
+
+def test_rejects_duplicate_days(tmp_path):
+    p = _write(tmp_path, (
+        "useful-math:\n"
+        "  platforms:\n"
+        "    youtube-shorts: { slot: \"00:00\", tz: \"America/New_York\", cadence: daily, days: [sun, sun] }\n"
+    ))
+    with pytest.raises(ConfigError, match="duplicate"):
+        load_channels(p)
+
+
+def test_rejects_non_string_day_yaml_boolean(tmp_path):
+    # YAML 1.1 parses bare `on` as the boolean True — must fail loud, not slip through
+    p = _write(tmp_path, (
+        "useful-math:\n"
+        "  platforms:\n"
+        "    youtube-shorts: { slot: \"00:00\", tz: \"America/New_York\", cadence: daily, days: [on] }\n"
+    ))
+    with pytest.raises(ConfigError, match="bad day 'True'"):
+        load_channels(p)

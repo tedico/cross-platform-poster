@@ -165,7 +165,8 @@ This is the instruction guide for plugging ANYTHING into the poster.
 
 **Tick** (`src/tick.py`, GitHub Actions cron every 15 min): quantizes the tick time down
 to the 15-minute grid and compares it against each slot in that slot's own timezone, so a
-slot fires exactly once per day regardless of cron jitter. For each due project+platform
+slot fires exactly once per day regardless of cron jitter (or only on the slot's `days`
+weekdays, when configured). For each due project+platform
 it takes the oldest `Ready` row tagged with that platform and not yet in its Posted
 Links, fails fast if any required secret is missing or empty (GH Actions maps unset
 secrets to empty strings — the row is left `Ready`), marks the row `Posting`, dispatches
@@ -223,13 +224,18 @@ adapter call, never here:
 ```yaml
 useful-math:
   platforms:
-    youtube-shorts: { slot: "12:00", tz: "America/New_York", cadence: daily }
-    ig-reels:       { slot: "12:00", tz: "America/New_York", cadence: daily }
+    youtube-shorts: { slot: "00:00", tz: "America/New_York", cadence: daily, days: [sun, tue, thu] }
+    ig-reels:       { slot: "00:00", tz: "America/New_York", cadence: daily, days: [sun, tue, thu] }
 ```
 
 Slots must be zero-padded `HH:MM`, quantized to `:00/:15/:30/:45`, with a valid IANA
-timezone; `cadence` currently only accepts `daily`. `src/config_loader.py` rejects
-anything else at startup.
+timezone; `cadence` currently only accepts `daily`. `days` is optional: a list of
+weekdays (`mon`/`tue`/`wed`/`thu`/`fri`/`sat`/`sun`, no duplicates) the slot fires on,
+evaluated in the slot's own timezone; omit it and the slot fires every day.
+`src/config_loader.py` rejects anything else at startup.
+
+Useful Math posts Sun/Tue/Thu at 00:00 ET (midnight) — the same cadence its AutoShorts
+series ran on.
 
 **Environment variables / secrets** (`.env.example` mirrors this, with one exception:
 `ADMIN_PAT` is workflow-only — consumed by `gh` in `refresh-ig-token.yml`, never by
@@ -251,7 +257,8 @@ Python — so it's a GH secret only and not in `.env.example`):
 secrets (`REQUIRED_ENV` in `src/tick.py`) and raises if any is missing or EMPTY — GH
 Actions maps an unset secret to an empty string, which would otherwise fail cryptically
 mid-upload and burn the queue row. The row stays `Ready`; the printed `FAILED` line
-fires once per due slot (daily per platform) until the secret is set.
+fires once per due slot (per platform, on that slot's scheduled days) until the secret
+is set.
 
 ## Troubleshooting
 

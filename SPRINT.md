@@ -15,7 +15,7 @@ clients; tick runs on GitHub Actions cron ($0/mo); watchdog on Zo reads the work
 run status via GitHub API (useful-math pattern). Spec + plan updated (see Pivot sections).
 
 ## Next
-Ted: Human items below (YouTube creds = long pole). Then: push main, open v1-build PR, merge, dispatch tick dry-run, create Post Queue DB, first supervised posts (Phase 3).
+Merge day-of-week-slots PR (Sun/Tue/Thu 00:00 ET schedule — AutoShorts cadence parity). Ted: Human items below (YouTube creds = long pole). Then: dispatch tick dry-run, create Post Queue DB, first supervised posts (Phase 3).
 
 ## Human
 - Google Cloud project + YouTube Data API OAuth creds for @Useful_Math; run scripts/get_youtube_token.py once for the refresh token; set the OAuth app to PRODUCTION status (else refresh tokens die in 7 days). SLOWEST item — start now
