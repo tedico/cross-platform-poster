@@ -22,3 +22,11 @@ jobs:
         run: |
           NEW_TOKEN=$(python scripts/refresh_ig_token.py)
           gh secret set IG_ACCESS_TOKEN --body "$NEW_TOKEN" --repo ${{ github.repository }}
+      # Dead-man's-switch heartbeat (UsefulMath spec 2026-07-24): exactly one ping
+      # per run, success or /fail; must never fail the job (|| true).
+      - name: Heartbeat
+        if: always()
+        run: >
+          curl -fsS -m 10 --retry 3
+          "https://hc-ping.com/${{ secrets.HEALTHCHECK_PING_KEY }}/ig-token-refresh${{ job.status != 'success' && '/fail' || '' }}"
+          || true

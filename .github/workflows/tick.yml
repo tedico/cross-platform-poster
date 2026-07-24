@@ -41,3 +41,11 @@ jobs:
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           ASSET_STORE_TOKEN: ${{ secrets.ASSET_STORE_TOKEN }}
         run: python -m src.tick ${{ inputs.dry_run && '--dry-run' || '' }} ${{ inputs.force && '--force' || '' }}
+      # Dead-man's-switch heartbeat (UsefulMath spec 2026-07-24): exactly one ping
+      # per run, success or /fail; must never fail the job (|| true).
+      - name: Heartbeat
+        if: always()
+        run: >
+          curl -fsS -m 10 --retry 3
+          "https://hc-ping.com/${{ secrets.HEALTHCHECK_PING_KEY }}/poster-tick${{ job.status != 'success' && '/fail' || '' }}"
+          || true
