@@ -1,0 +1,158 @@
+{
+  "schema": 1,
+  "sections": [
+    {
+      "connections": [
+        {
+          "from_step_id": 316911,
+          "id": 353318,
+          "label": "due (scheduled time reached)",
+          "to_step_id": 316912
+        },
+        {
+          "from_step_id": 316913,
+          "id": 353319,
+          "label": "fresh IG token",
+          "to_step_id": 316912
+        }
+      ],
+      "description": "The posting half of the UsefulMath pipeline (repo tedico/cross-platform-poster). Upstream: the UsefulMath approved watcher writes Content Posting Queue rows. This tab covers what happens from queue row to published post.",
+      "id": 34487,
+      "name": "Post Queue → Platforms",
+      "notes": "",
+      "steps": [
+        {
+          "executor": "Automation",
+          "id": 316911,
+          "name": "Content Posting Queue row lands (Notion)",
+          "notes": "Written by the UsefulMath approved watcher (see the Useful Math tab). The queue is a machine state-machine DB — zero human statuses by design (data-layer contract exemption).",
+          "primary_tool_id": null,
+          "status": "Live",
+          "type": "database"
+        },
+        {
+          "executor": "Automation",
+          "id": 316912,
+          "name": "Tick (GH Actions, */15) → post due rows",
+          "notes": "`tick.yml`: every 15 min, posts any due queue rows to the platforms (YouTube Shorts, Instagram). GitHub throttles */15 crons ~3h overnight — alarm threshold 4h by design (poster PR #8). Supports `dry_run` dispatch input. Heartbeat slug: `poster-tick` (grace 4h).",
+          "primary_tool_id": null,
+          "status": "Live",
+          "type": "workflow"
+        },
+        {
+          "executor": "Automation",
+          "id": 316913,
+          "name": "IG token refresh (GH Actions, monthly 5th)",
+          "notes": "`refresh-ig-token.yml`, cron 0 9 5 ** — refreshes the Instagram access token well inside its 60-day window. Heartbeat slug: `ig-token-refresh` (grace 24h). NOTE: dispatch from main — the v1-build branch script is stale (“Missing client_id” = old code, not expired creds).",
+          "primary_tool_id": null,
+          "status": "Live",
+          "type": "task"
+        }
+      ]
+    },
+    {
+      "connections": [
+        {
+          "from_step_id": 316914,
+          "id": 353321,
+          "label": "ping per run",
+          "to_step_id": 316915
+        },
+        {
+          "from_step_id": 316912,
+          "id": 353322,
+          "label": "ping per run",
+          "to_step_id": 316915
+        }
+      ],
+      "description": "Same dead-man's-switch layer as UsefulMath (added 2026-07-24): both workflows and the watchdog ping healthchecks.io; a missing ping is the alarm.",
+      "id": 34488,
+      "name": "Monitoring",
+      "notes": "",
+      "steps": [
+        {
+          "executor": "AI Agent",
+          "id": 316914,
+          "name": "Poster watchdog (Zo, hourly :30) — transitional",
+          "notes": "Zo automation `cc1af1e5`: pull-based health check of the tick workflows + Post Queue. Retiring with the other pull-based watchdogs after the heartbeat system delivers a clean week. Heartbeat slug: `poster-watchdog` (grace 30m).",
+          "primary_tool_id": null,
+          "status": "Live",
+          "type": "notification"
+        },
+        {
+          "executor": "Automation",
+          "id": 316915,
+          "name": "Heartbeats → healthchecks.io (3 checks)",
+          "notes": "`poster-tick`, `ig-token-refresh`, `poster-watchdog` — registry + schedules live in the UsefulMath repo: `scripts/hc_provision.py::CHECKS`. Down/fail → email + Telegram + GitHub issue in tedico/useful-math.",
+          "primary_tool_id": null,
+          "status": "Live",
+          "type": "signal"
+        }
+      ]
+    }
+  ],
+  "tab": "Cross-Platform Poster",
+  "tools": [
+    {
+      "id": 1,
+      "name": "Puzzle",
+      "notes": "",
+      "status": "Active"
+    },
+    {
+      "id": 23,
+      "name": "Notion",
+      "notes": "",
+      "status": "Active"
+    },
+    {
+      "id": 51,
+      "name": "Instagram",
+      "notes": "Posting target of cross-platform-poster. Access token auto-refreshed monthly by `refresh-ig-token.yml` (heartbeat slug `ig-token-refresh`).",
+      "status": "Active"
+    },
+    {
+      "id": 57,
+      "name": "YouTube",
+      "notes": "",
+      "status": "Active"
+    },
+    {
+      "id": 70,
+      "name": "Canva",
+      "notes": "",
+      "status": "Active"
+    },
+    {
+      "id": 136,
+      "name": "Github",
+      "notes": "",
+      "status": "Active"
+    },
+    {
+      "id": 661,
+      "name": "Gemini",
+      "notes": "",
+      "status": "Active"
+    },
+    {
+      "id": 957,
+      "name": "Descript",
+      "notes": "**FIRED 2026-07-21** — replaced by the in-repo KM-engine (ffmpeg + ElevenLabs on Zo, `src/assemble/`): ~$0.35/video vs $600/yr. Kept here for history.",
+      "status": "Cancelled"
+    },
+    {
+      "id": 1124,
+      "name": "ElevenLabs",
+      "notes": "",
+      "status": "Active"
+    },
+    {
+      "id": 3894,
+      "name": "Claude Code",
+      "notes": "",
+      "status": "Active"
+    }
+  ],
+  "workspace": 11270
+}
