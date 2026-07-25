@@ -1,21 +1,33 @@
 {
-  "schema": 1,
+  "connections": [
+    {
+      "from_step_id": 316911,
+      "id": 353318,
+      "label": "due (scheduled time reached)",
+      "to_step_id": 316912
+    },
+    {
+      "from_step_id": 316913,
+      "id": 353319,
+      "label": "fresh IG token",
+      "to_step_id": 316912
+    },
+    {
+      "from_step_id": 316912,
+      "id": 353320,
+      "label": "ping per run",
+      "to_step_id": 316915
+    },
+    {
+      "from_step_id": 316914,
+      "id": 353321,
+      "label": "ping per run",
+      "to_step_id": 316915
+    }
+  ],
+  "schema": 2,
   "sections": [
     {
-      "connections": [
-        {
-          "from_step_id": 316911,
-          "id": 353318,
-          "label": "due (scheduled time reached)",
-          "to_step_id": 316912
-        },
-        {
-          "from_step_id": 316913,
-          "id": 353319,
-          "label": "fresh IG token",
-          "to_step_id": 316912
-        }
-      ],
       "description": "The posting half of the UsefulMath pipeline (repo tedico/cross-platform-poster). Upstream: the UsefulMath approved watcher writes Content Posting Queue rows. This tab covers what happens from queue row to published post.",
       "id": 34487,
       "name": "Post Queue → Platforms",
@@ -51,20 +63,6 @@
       ]
     },
     {
-      "connections": [
-        {
-          "from_step_id": 316914,
-          "id": 353321,
-          "label": "ping per run",
-          "to_step_id": 316915
-        },
-        {
-          "from_step_id": 316912,
-          "id": 353322,
-          "label": "ping per run",
-          "to_step_id": 316915
-        }
-      ],
       "description": "Same dead-man's-switch layer as UsefulMath (added 2026-07-24): both workflows and the watchdog ping healthchecks.io; a missing ping is the alarm.",
       "id": 34488,
       "name": "Monitoring",
