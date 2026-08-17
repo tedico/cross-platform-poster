@@ -31,10 +31,17 @@ the Pivot section of `docs/superpowers/specs/2026-07-07-cross-platform-poster-de
   the `IG_ACCESS_TOKEN` secret monthly (5th of each month) so it never lapses.
 - **The YouTube OAuth app must be in PRODUCTION status**, or Google expires the refresh
   token after 7 days and every upload dies with `invalid_grant`.
-- **`ig-carousel` exists in the Post Queue schema but has NO poster client yet.** Do not
-  tag rows with it: a multi-platform row including `ig-carousel` returns to `Ready` after
-  its other platforms post and sits there forever (a row is only `Posted` once every
-  tagged platform has a permalink).
+- **`ig-carousel` ships (2026-08-17)** — `src/instagram_carousel_client.py` posts a 2–10
+  image carousel: one child container per image, one `CAROUSEL` parent carrying the
+  caption, then `media_publish`. Every image URL must be public *and still alive at
+  publish time*, since the cron runs roughly hourly.
+- **Instagram credentials are PER PROJECT.** Projects post as different accounts
+  (`@useful_math_`, `@athena_make_useful_things`), so `IG_USER_ID` / `IG_ACCESS_TOKEN`
+  cannot be global. Useful Math keeps the unsuffixed pair; every other project needs
+  `IG_USER_ID_<PROJECT>` / `IG_ACCESS_TOKEN_<PROJECT>` (e.g. `IG_USER_ID_ATHENA`).
+  **There is deliberately no fallback** — a missing secret leaves the row `Ready` and
+  reports it, because the alternative is publishing one brand's post to another's
+  account.
 
 ## Setup
 

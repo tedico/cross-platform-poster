@@ -12,6 +12,23 @@ Used By: (stamped in the cross-platform-poster README)
 """
 
 
+NOTION_TEXT_LIMIT = 2000  # per rich_text object, not per property
+
+
+def _text_objects(text: str) -> list:
+    """Split into <=2000-char objects; Notion rejects a longer single one.
+
+    This used to be `caption[:2000]`, which silently truncated. Instagram
+    allows 2200, and Athena's carousel captions run to ~2184 — so a straight
+    slice cut the sources block and hashtags off the end of the longest ones,
+    which is exactly the content that must never be trimmed.
+    """
+    return [
+        {"text": {"content": text[i:i + NOTION_TEXT_LIMIT]}}
+        for i in range(0, len(text), NOTION_TEXT_LIMIT)
+    ] or [{"text": {"content": ""}}]
+
+
 def enqueue(client, db_id: str, *, project: str, title: str, asset_urls: list,
             caption: str, platforms: list, gate: str = "gated",
             publish_at: str = None):
@@ -40,7 +57,7 @@ def enqueue(client, db_id: str, *, project: str, title: str, asset_urls: list,
         "Project": {"select": {"name": project}},
         "Asset URL(s)": {"rich_text": [{"text": {"content": "\n".join(asset_urls)}}]},
         "Asset Type": {"select": {"name": asset_type}},
-        "Caption": {"rich_text": [{"text": {"content": caption[:2000]}}]},
+        "Caption": {"rich_text": _text_objects(caption)},
         "Platforms": {"multi_select": [{"name": p} for p in platforms]},
         "Status": {"select": {"name": status}},
     }

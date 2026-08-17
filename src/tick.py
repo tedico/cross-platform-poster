@@ -7,6 +7,7 @@ printed summary is the SMS trigger. --dry-run logs what WOULD post and touches
 nothing."""
 import argparse
 import os
+import re
 import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -17,6 +18,7 @@ from notion_client import Client
 
 from src.assets import download_assets
 from src.config_loader import load_channels
+from src.instagram_carousel_client import post as ig_carousel_post
 from src.instagram_client import post as ig_post
 from src.queue_client import (
     find_due_dated_row, find_due_row, find_stuck_posting, mark_posting,
@@ -36,18 +38,59 @@ def _post_youtube(fields, tmp):
                    refresh_token=os.environ["YT_REFRESH_TOKEN"])
 
 
+# Useful Math has posted on the unsuffixed IG_* pair since this repo shipped.
+# Grandfather it rather than silently re-pointing a live channel.
+LEGACY_IG_PROJECT = "Useful Math"
+
+
+def _ig_env_names(project: str) -> tuple:
+    """The env var names holding THIS project's Instagram credentials.
+
+    Projects post as different Instagram accounts — Useful Math as
+    @useful_math_, Athena as @athena_make_useful_things — so one global token
+    cannot serve both.
+
+    There is deliberately NO fallback to the unsuffixed pair. A missing
+    IG_USER_ID_ATHENA must fail the row loudly, because the alternative is
+    publishing Athena's carousel to Useful Math's account: public, wrong, and
+    not undoable by this code.
+    """
+    if project == LEGACY_IG_PROJECT:
+        return ("IG_USER_ID", "IG_ACCESS_TOKEN")
+    suffix = "_" + re.sub(r"[^A-Z0-9]+", "_", project.upper()).strip("_")
+    return (f"IG_USER_ID{suffix}", f"IG_ACCESS_TOKEN{suffix}")
+
+
 def _post_instagram(fields, tmp):
     # IG fetches the video itself — no download; asset URL must be public.
+    user_id, token = _ig_env_names(fields["project"])
     return ig_post(fields["asset_urls"][0], fields["caption"],
-                   ig_user_id=os.environ["IG_USER_ID"],
-                   access_token=os.environ["IG_ACCESS_TOKEN"])
+                   ig_user_id=os.environ[user_id],
+                   access_token=os.environ[token])
 
 
-PLATFORM_POSTERS = {"youtube-shorts": _post_youtube, "ig-reels": _post_instagram}
+def _post_ig_carousel(fields, tmp):
+    # Same deal: IG fetches every image itself, so all of them must be public
+    # and still alive at publish time (the cron runs roughly hourly).
+    user_id, token = _ig_env_names(fields["project"])
+    return ig_carousel_post(fields["asset_urls"], fields["caption"],
+                            ig_user_id=os.environ[user_id],
+                            access_token=os.environ[token])
+
+
+PLATFORM_POSTERS = {"youtube-shorts": _post_youtube,
+                    "ig-reels": _post_instagram,
+                    "ig-carousel": _post_ig_carousel}
 REQUIRED_ENV = {
     "youtube-shorts": ("YT_CLIENT_ID", "YT_CLIENT_SECRET", "YT_REFRESH_TOKEN"),
-    "ig-reels": ("IG_USER_ID", "IG_ACCESS_TOKEN"),
 }
+
+
+def required_env(platform: str, project: str) -> tuple:
+    """Env vars that must be non-empty for this platform+project to post."""
+    if platform in ("ig-reels", "ig-carousel"):
+        return _ig_env_names(project)
+    return REQUIRED_ENV[platform]
 
 
 def _publish(notion, page, platform, dry_run) -> str:
@@ -63,7 +106,8 @@ def _publish(notion, page, platform, dry_run) -> str:
                 f"({len(fields['asset_urls'])} asset(s))")
     # GH Actions maps an unset secret to an EMPTY string, so os.environ[...]
     # would succeed and fail later cryptically — and burn the queue row.
-    missing = [k for k in REQUIRED_ENV[platform] if not os.environ.get(k)]
+    missing = [k for k in required_env(platform, fields["project"])
+               if not os.environ.get(k)]
     if missing:
         raise ValueError(
             f"{platform}: missing or empty env secret(s): {', '.join(missing)} "
@@ -161,7 +205,8 @@ def main():
     cfg = load_channels(Path(__file__).resolve().parent.parent / "channels.yaml")
     env = {
         "db_id": os.environ["POST_QUEUE_DB_ID"],
-        "project_names": {"useful-math": "Useful Math"},
+        # channels.yaml slug -> the Notion "Project" select value.
+        "project_names": {"useful-math": "Useful Math", "athena": "Athena"},
     }
     notion = Client(auth=os.environ["NOTION_TOKEN"])
     sys.exit(run_tick(cfg, env, notion,

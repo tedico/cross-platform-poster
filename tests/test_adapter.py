@@ -58,3 +58,30 @@ def test_enqueue_rejects_bad_gate():
                         asset_urls=["https://a/hua.mp4"], caption="c",
                         platforms=["youtube-shorts"], gate="manual")
     client.databases.query.assert_not_called()
+
+
+def test_long_caption_survives_notions_per_object_limit():
+    """Athena's captions run to ~2184 chars — IG allows 2200. A plain
+    caption[:2000] slice dropped the sources block and hashtags off the end."""
+    client = MagicMock()
+    client.databases.query.return_value = {"results": []}
+    caption = "A" * 2184
+    adapter.enqueue(client, "db1", project="Athena", title="t",
+            asset_urls=["https://a/1.png", "https://a/2.png"],
+            caption=caption, platforms=["ig-carousel"])
+    props = client.pages.create.call_args.kwargs["properties"]
+    chunks = props["Caption"]["rich_text"]
+    assert all(len(c["text"]["content"]) <= 2000 for c in chunks)
+    assert "".join(c["text"]["content"] for c in chunks) == caption
+
+
+def test_image_set_is_detected_for_a_carousel():
+    client = MagicMock()
+    client.databases.query.return_value = {"results": []}
+    adapter.enqueue(client, "db1", project="Athena", title="t",
+            asset_urls=[f"https://a/card{i}.png" for i in range(1, 8)],
+            caption="c", platforms=["ig-carousel"])
+    props = client.pages.create.call_args.kwargs["properties"]
+    assert props["Asset Type"]["select"]["name"] == "image-set"
+    assert props["Asset URL(s)"]["rich_text"][0]["text"]["content"].count(
+        "\n") == 6

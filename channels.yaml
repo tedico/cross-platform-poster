@@ -1,4 +1,13 @@
 # Projects and their target platforms. Scheduling lives on each row's
 # "Publish Date & Time" (Notion) — no fixed slots.
+#
+# Each project posts as its OWN Instagram account, so IG credentials are
+# per-project env vars (see tick._ig_env_names): Useful Math keeps the legacy
+# unsuffixed IG_USER_ID / IG_ACCESS_TOKEN, every other project needs a
+# suffixed pair such as IG_USER_ID_ATHENA. There is no fallback — a missing
+# secret fails the row rather than posting to the wrong account.
 useful-math:
   platforms: [youtube-shorts, ig-reels]
+
+athena:
+  platforms: [ig-carousel]

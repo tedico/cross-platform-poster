@@ -2,6 +2,7 @@ import os
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
+from src import tick
 from src.tick import run_tick
 
 CFG = {"useful-math": {"platforms": ["youtube-shorts"]}}
@@ -324,3 +325,41 @@ def test_partial_failure_preserves_posted_link_and_retries_only_failed(mocker, t
     assert "ig-reels: https://www.instagram.com/reel/AB/" in links
     yt.assert_called_once()  # across BOTH ticks — no YT double-post
     assert ig.call_count == 2
+
+
+# --- per-project Instagram credentials -------------------------------------
+# Athena and Useful Math are DIFFERENT Instagram accounts. These tests exist
+# because the failure they prevent is public and permanent: Athena's carousel
+# published to @useful_math_.
+
+def test_legacy_project_keeps_the_unsuffixed_credentials():
+    """Useful Math has posted on IG_USER_ID/IG_ACCESS_TOKEN since day one."""
+    assert tick._ig_env_names("Useful Math") == (
+        "IG_USER_ID", "IG_ACCESS_TOKEN")
+
+
+def test_other_projects_get_their_own_suffixed_credentials():
+    assert tick._ig_env_names("Athena") == (
+        "IG_USER_ID_ATHENA", "IG_ACCESS_TOKEN_ATHENA")
+    assert tick._ig_env_names("Super Psychology") == (
+        "IG_USER_ID_SUPER_PSYCHOLOGY", "IG_ACCESS_TOKEN_SUPER_PSYCHOLOGY")
+
+
+def test_athena_never_falls_back_to_useful_maths_account(monkeypatch):
+    """The dangerous case: UM's token is set, Athena's is not.
+
+    A fallback would publish Athena's carousel to @useful_math_. The row must
+    be reported as missing secrets instead.
+    """
+    monkeypatch.setenv("IG_USER_ID", "17840000")
+    monkeypatch.setenv("IG_ACCESS_TOKEN", "um-token")
+    monkeypatch.delenv("IG_USER_ID_ATHENA", raising=False)
+    monkeypatch.delenv("IG_ACCESS_TOKEN_ATHENA", raising=False)
+    names = tick.required_env("ig-carousel", "Athena")
+    assert names == ("IG_USER_ID_ATHENA", "IG_ACCESS_TOKEN_ATHENA")
+    assert [n for n in names if not os.environ.get(n)] == list(names)
+
+
+def test_ig_carousel_has_a_poster_client():
+    """The README's known hole: the platform existed with nothing behind it."""
+    assert "ig-carousel" in tick.PLATFORM_POSTERS
