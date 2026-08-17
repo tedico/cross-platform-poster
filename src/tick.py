@@ -93,7 +93,7 @@ def required_env(platform: str, project: str) -> tuple:
     return REQUIRED_ENV[platform]
 
 
-def _publish(notion, page, platform, dry_run) -> str:
+def _publish(notion, page, platform, dry_run, caption_limit=None) -> str:
     """Publish one row to one platform. Returns the summary line."""
     if platform not in PLATFORM_POSTERS:
         # Row stays Ready; the FAILED line fires on every tick while a row is
@@ -112,6 +112,15 @@ def _publish(notion, page, platform, dry_run) -> str:
         raise ValueError(
             f"{platform}: missing or empty env secret(s): {', '.join(missing)} "
             "(row left Ready; set the GitHub repo secrets)")
+    # Refuse rather than truncate. A silently shortened caption loses whatever
+    # sits at the END — for Athena that is the sources block and hashtags, the
+    # part the editorial spec says never to trim.
+    if caption_limit is not None and len(fields["caption"]) > caption_limit:
+        raise ValueError(
+            f"caption is {len(fields['caption'])} chars, over "
+            f"{fields['project']}'s caption_limit of {caption_limit} "
+            "(row left Ready; shorten the caption or raise the limit in "
+            "channels.yaml)")
     mark_posting(notion, page)
     try:
         with tempfile.TemporaryDirectory() as tmp:
@@ -163,7 +172,8 @@ def run_tick(cfg, env, notion, now, dry_run=False, force=False) -> int:
                 if page is None:
                     continue  # nothing overdue: silent skip by design
                 try:
-                    lines.append(_publish(notion, page, platform, dry_run))
+                    lines.append(_publish(notion, page, platform, dry_run,
+                                          pcfg.get("caption_limit")))
                 except Exception as e:  # noqa: BLE001
                     failures.append(f"FAILED {project}->{platform}: {e}")
 
@@ -181,7 +191,8 @@ def run_tick(cfg, env, notion, now, dry_run=False, force=False) -> int:
                     if page is None:
                         continue  # empty queue: silent skip by design
                     try:
-                        lines.append(_publish(notion, page, platform, dry_run))
+                        lines.append(_publish(notion, page, platform, dry_run,
+                                              pcfg.get("caption_limit")))
                     except Exception as e:  # noqa: BLE001
                         failures.append(f"FAILED {project}->{platform}: {e}")
     except Exception as e:  # noqa: BLE001 — SMS contract: always print, always exit 1

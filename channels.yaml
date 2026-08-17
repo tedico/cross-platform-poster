@@ -6,8 +6,15 @@
 # unsuffixed IG_USER_ID / IG_ACCESS_TOKEN, every other project needs a
 # suffixed pair such as IG_USER_ID_ATHENA. There is no fallback — a missing
 # secret fails the row rather than posting to the wrong account.
+#
+# caption_limit is the project's EDITORIAL cap, defaulting to Instagram's hard
+# 2200. A row over its project's limit fails loudly instead of being truncated:
+# truncation eats the END of a caption, which is where sources and hashtags
+# live.
 useful-math:
   platforms: [youtube-shorts, ig-reels]
+  caption_limit: 2000
 
 athena:
   platforms: [ig-carousel]
+  caption_limit: 2200

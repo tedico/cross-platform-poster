@@ -57,3 +57,38 @@ def test_rejects_non_string_platform(tmp_path):
     ))
     with pytest.raises(ConfigError, match="bad platform 'True'"):
         load_channels(p)
+
+
+# --- caption_limit ----------------------------------------------------------
+
+def _write(tmp_path, body):
+    p = tmp_path / "channels.yaml"
+    p.write_text(body)
+    return p
+
+
+def test_caption_limit_defaults_to_instagrams_ceiling(tmp_path):
+    cfg = load_channels(_write(tmp_path, "athena:\n  platforms: [ig-carousel]\n"))
+    assert cfg["athena"]["caption_limit"] == 2200
+
+
+def test_caption_limit_is_read_per_project(tmp_path):
+    cfg = load_channels(_write(tmp_path,
+        "useful-math:\n  platforms: [ig-reels]\n  caption_limit: 2000\n"
+        "athena:\n  platforms: [ig-carousel]\n  caption_limit: 2200\n"))
+    assert cfg["useful-math"]["caption_limit"] == 2000
+    assert cfg["athena"]["caption_limit"] == 2200
+
+
+def test_caption_limit_above_instagrams_hard_cap_is_rejected(tmp_path):
+    """A limit over 2200 is a lie — the platform rejects the post."""
+    with pytest.raises(ConfigError, match="2200"):
+        load_channels(_write(tmp_path,
+            "athena:\n  platforms: [ig-carousel]\n  caption_limit: 5000\n"))
+
+
+@pytest.mark.parametrize("bad", ["'2000'", "0", "-1", "true", "2.5"])
+def test_caption_limit_must_be_a_positive_int(tmp_path, bad):
+    with pytest.raises(ConfigError, match="positive integer"):
+        load_channels(_write(tmp_path,
+            f"athena:\n  platforms: [ig-carousel]\n  caption_limit: {bad}\n"))

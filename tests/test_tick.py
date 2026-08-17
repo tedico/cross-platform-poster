@@ -1,3 +1,4 @@
+import pytest
 import os
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
@@ -363,3 +364,30 @@ def test_athena_never_falls_back_to_useful_maths_account(monkeypatch):
 def test_ig_carousel_has_a_poster_client():
     """The README's known hole: the platform existed with nothing behind it."""
     assert "ig-carousel" in tick.PLATFORM_POSTERS
+
+
+def test_over_limit_caption_fails_the_row_instead_of_truncating(monkeypatch):
+    """Truncation eats the END of a caption — sources and hashtags."""
+    monkeypatch.setenv("IG_USER_ID_ATHENA", "1784")
+    monkeypatch.setenv("IG_ACCESS_TOKEN_ATHENA", "tok")
+    page = _row(platforms=("ig-carousel",))
+    page["properties"]["Project"]["select"] = {"name": "Athena"}
+    page["properties"]["Caption"]["rich_text"] = [
+        {"plain_text": "x" * 2201}]
+    with pytest.raises(ValueError, match="2201 chars, over"):
+        tick._publish(MagicMock(), page, "ig-carousel", False,
+                      caption_limit=2200)
+
+
+def test_caption_at_exactly_the_limit_is_allowed(monkeypatch):
+    monkeypatch.setenv("IG_USER_ID_ATHENA", "1784")
+    monkeypatch.setenv("IG_ACCESS_TOKEN_ATHENA", "tok")
+    page = _row(platforms=("ig-carousel",))
+    page["properties"]["Project"]["select"] = {"name": "Athena"}
+    page["properties"]["Caption"]["rich_text"] = [{"plain_text": "x" * 2200}]
+    monkeypatch.setattr(tick, "mark_posting", lambda *a, **k: None)
+    monkeypatch.setattr(tick, "record_result", lambda *a, **k: None)
+    monkeypatch.setitem(tick.PLATFORM_POSTERS, "ig-carousel",
+                        lambda fields, tmp: "https://ig/p/OK/")
+    assert "POSTED" in tick._publish(MagicMock(), page, "ig-carousel", False,
+                                     caption_limit=2200)
