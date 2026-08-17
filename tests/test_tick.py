@@ -263,7 +263,10 @@ def _fake_notion(page):
 
 
 OVERDUE = "2026-07-08T09:00:00.000-04:00"  # 13:00 UTC — 3h before NOW
-CFG_BOTH = {"useful-math": {"platforms": ["youtube-shorts", "ig-reels"]}}
+CFG_BOTH = {"useful-math": {"platforms": ["youtube-shorts", "ig-reels"],
+                            "notion_project": "Useful Math",
+                            "ig_user_id_env": "IG_USER_ID",
+                            "ig_access_token_env": "IG_ACCESS_TOKEN"}}
 
 
 def test_same_row_two_platforms_one_tick(mocker, tmp_path):
@@ -333,32 +336,39 @@ def test_partial_failure_preserves_posted_link_and_retries_only_failed(mocker, t
 # because the failure they prevent is public and permanent: Athena's carousel
 # published to @useful_math_.
 
-def test_legacy_project_keeps_the_unsuffixed_credentials():
-    """Useful Math has posted on IG_USER_ID/IG_ACCESS_TOKEN since day one."""
-    assert tick._ig_env_names("Useful Math") == (
-        "IG_USER_ID", "IG_ACCESS_TOKEN")
+ATHENA_CFG = {"notion_project": "Athena",
+              "platforms": ["ig-carousel"],
+              "caption_limit": 2200,
+              "ig_user_id_env": "IG_USER_ID_ATHENA",
+              "ig_access_token_env": "IG_ACCESS_TOKEN_ATHENA"}
+UM_CFG = {"notion_project": "Useful Math",
+          "platforms": ["ig-reels"],
+          "caption_limit": 2000,
+          "ig_user_id_env": "IG_USER_ID",
+          "ig_access_token_env": "IG_ACCESS_TOKEN"}
 
 
-def test_other_projects_get_their_own_suffixed_credentials():
-    assert tick._ig_env_names("Athena") == (
+def test_each_project_uses_the_credentials_its_own_config_names():
+    assert tick.required_env("ig-carousel", ATHENA_CFG) == (
         "IG_USER_ID_ATHENA", "IG_ACCESS_TOKEN_ATHENA")
-    assert tick._ig_env_names("Super Psychology") == (
-        "IG_USER_ID_SUPER_PSYCHOLOGY", "IG_ACCESS_TOKEN_SUPER_PSYCHOLOGY")
+    assert tick.required_env("ig-reels", UM_CFG) == (
+        "IG_USER_ID", "IG_ACCESS_TOKEN")
 
 
 def test_athena_never_falls_back_to_useful_maths_account(monkeypatch):
     """The dangerous case: UM's token is set, Athena's is not.
 
     A fallback would publish Athena's carousel to @useful_math_. The row must
-    be reported as missing secrets instead.
+    fail as missing secrets instead.
     """
     monkeypatch.setenv("IG_USER_ID", "17840000")
     monkeypatch.setenv("IG_ACCESS_TOKEN", "um-token")
     monkeypatch.delenv("IG_USER_ID_ATHENA", raising=False)
     monkeypatch.delenv("IG_ACCESS_TOKEN_ATHENA", raising=False)
-    names = tick.required_env("ig-carousel", "Athena")
-    assert names == ("IG_USER_ID_ATHENA", "IG_ACCESS_TOKEN_ATHENA")
-    assert [n for n in names if not os.environ.get(n)] == list(names)
+    page = _row(platforms=("ig-carousel",))
+    page["properties"]["Project"]["select"] = {"name": "Athena"}
+    with pytest.raises(ValueError, match="IG_USER_ID_ATHENA"):
+        tick._publish(MagicMock(), page, "ig-carousel", False, ATHENA_CFG)
 
 
 def test_ig_carousel_has_a_poster_client():
@@ -375,8 +385,7 @@ def test_over_limit_caption_fails_the_row_instead_of_truncating(monkeypatch):
     page["properties"]["Caption"]["rich_text"] = [
         {"plain_text": "x" * 2201}]
     with pytest.raises(ValueError, match="2201 chars, over"):
-        tick._publish(MagicMock(), page, "ig-carousel", False,
-                      caption_limit=2200)
+        tick._publish(MagicMock(), page, "ig-carousel", False, ATHENA_CFG)
 
 
 def test_caption_at_exactly_the_limit_is_allowed(monkeypatch):
@@ -388,6 +397,5 @@ def test_caption_at_exactly_the_limit_is_allowed(monkeypatch):
     monkeypatch.setattr(tick, "mark_posting", lambda *a, **k: None)
     monkeypatch.setattr(tick, "record_result", lambda *a, **k: None)
     monkeypatch.setitem(tick.PLATFORM_POSTERS, "ig-carousel",
-                        lambda fields, tmp: "https://ig/p/OK/")
-    assert "POSTED" in tick._publish(MagicMock(), page, "ig-carousel", False,
-                                     caption_limit=2200)
+                        lambda fields, tmp, pcfg: "https://ig/p/OK/")
+    assert "POSTED" in tick._publish(MagicMock(), page, "ig-carousel", False, ATHENA_CFG)

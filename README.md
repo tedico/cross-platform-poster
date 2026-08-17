@@ -35,13 +35,31 @@ the Pivot section of `docs/superpowers/specs/2026-07-07-cross-platform-poster-de
   image carousel: one child container per image, one `CAROUSEL` parent carrying the
   caption, then `media_publish`. Every image URL must be public *and still alive at
   publish time*, since the cron runs roughly hourly.
-- **Instagram credentials are PER PROJECT.** Projects post as different accounts
-  (`@useful_math_`, `@athena_make_useful_things`), so `IG_USER_ID` / `IG_ACCESS_TOKEN`
-  cannot be global. Useful Math keeps the unsuffixed pair; every other project needs
-  `IG_USER_ID_<PROJECT>` / `IG_ACCESS_TOKEN_<PROJECT>` (e.g. `IG_USER_ID_ATHENA`).
-  **There is deliberately no fallback** — a missing secret leaves the row `Ready` and
-  reports it, because the alternative is publishing one brand's post to another's
-  account.
+- **A project is defined entirely in `channels.yaml`** — its Notion `Project` value, its
+  platforms, its caption cap, and the **names** of the env vars holding its credentials.
+  Adding a project is one config block plus its GitHub secrets; there is no code to
+  change.
+- **Instagram credentials are per project and never shared.** Projects post as different
+  accounts (`@useful_math_`, `@athena_make_useful_things`), so each names its own
+  `ig_user_id_env` / `ig_access_token_env`. Nothing is derived from the project name and
+  **there is deliberately no fallback**: a missing secret leaves the row `Ready` and
+  reports it. `load_channels` also refuses to let two projects claim the same credential
+  env var, because the failure being designed out — publishing one brand's post to
+  another's account — is public and not undoable.
+
+### Adding a project
+
+```yaml
+my-project:
+  notion_project: "My Project"        # exact Post Queue "Project" select value
+  platforms: [ig-carousel]
+  caption_limit: 2200                 # optional; defaults to IG's hard 2200
+  ig_user_id_env: IG_USER_ID_MY_PROJECT
+  ig_access_token_env: IG_ACCESS_TOKEN_MY_PROJECT
+```
+
+Then set those two secrets on the repo, copy `adapter/post_queue_adapter.py` into the
+consumer, and add the project to the `Used By` list below.
 
 ## Setup
 
