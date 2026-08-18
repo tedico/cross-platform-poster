@@ -16,7 +16,10 @@ from dotenv import load_dotenv
 from notion_client import Client
 
 from src.assets import download_assets
-from src.config_loader import load_channels
+from src.config_loader import (
+    IG_CREDENTIAL_KEYS, IG_PLATFORMS, load_channels, project_names,
+)
+from src.instagram_carousel_client import post as ig_carousel_post
 from src.instagram_client import post as ig_post
 from src.queue_client import (
     find_due_dated_row, find_due_row, find_stuck_posting, mark_posting,
@@ -27,7 +30,7 @@ from src.youtube_client import post as yt_post
 STUCK_AGE = timedelta(hours=1)  # a Posting row younger than this may be a live tick
 
 
-def _post_youtube(fields, tmp):
+def _post_youtube(fields, tmp, pcfg):
     paths = download_assets(fields["asset_urls"][:1], tmp,
                             token=os.environ.get("ASSET_STORE_TOKEN"))
     return yt_post(paths[0], fields["title"], fields["caption"],
@@ -36,21 +39,49 @@ def _post_youtube(fields, tmp):
                    refresh_token=os.environ["YT_REFRESH_TOKEN"])
 
 
-def _post_instagram(fields, tmp):
+def _ig_credentials(pcfg) -> tuple:
+    """This project's Instagram account, read from ITS OWN config.
+
+    Nothing is derived from the project name and nothing falls back to a
+    shared default — channels.yaml names the env vars outright, and
+    config_loader refuses to let two projects claim the same pair. The failure
+    being designed out is publishing one brand's post to another's account.
+    """
+    return (os.environ[pcfg["ig_user_id_env"]],
+            os.environ[pcfg["ig_access_token_env"]])
+
+
+def _post_instagram(fields, tmp, pcfg):
     # IG fetches the video itself — no download; asset URL must be public.
+    user_id, token = _ig_credentials(pcfg)
     return ig_post(fields["asset_urls"][0], fields["caption"],
-                   ig_user_id=os.environ["IG_USER_ID"],
-                   access_token=os.environ["IG_ACCESS_TOKEN"])
+                   ig_user_id=user_id, access_token=token)
 
 
-PLATFORM_POSTERS = {"youtube-shorts": _post_youtube, "ig-reels": _post_instagram}
+def _post_ig_carousel(fields, tmp, pcfg):
+    # Same deal: IG fetches every image itself, so all of them must be public
+    # and still alive at publish time (the cron runs roughly hourly).
+    user_id, token = _ig_credentials(pcfg)
+    return ig_carousel_post(fields["asset_urls"], fields["caption"],
+                            ig_user_id=user_id, access_token=token)
+
+
+PLATFORM_POSTERS = {"youtube-shorts": _post_youtube,
+                    "ig-reels": _post_instagram,
+                    "ig-carousel": _post_ig_carousel}
 REQUIRED_ENV = {
     "youtube-shorts": ("YT_CLIENT_ID", "YT_CLIENT_SECRET", "YT_REFRESH_TOKEN"),
-    "ig-reels": ("IG_USER_ID", "IG_ACCESS_TOKEN"),
 }
 
 
-def _publish(notion, page, platform, dry_run) -> str:
+def required_env(platform: str, pcfg: dict) -> tuple:
+    """Env vars that must be non-empty for this platform+project to post."""
+    if platform in IG_PLATFORMS:
+        return tuple(pcfg[k] for k in IG_CREDENTIAL_KEYS)
+    return REQUIRED_ENV[platform]
+
+
+def _publish(notion, page, platform, dry_run, pcfg=None) -> str:
     """Publish one row to one platform. Returns the summary line."""
     if platform not in PLATFORM_POSTERS:
         # Row stays Ready; the FAILED line fires on every tick while a row is
@@ -63,15 +94,27 @@ def _publish(notion, page, platform, dry_run) -> str:
                 f"({len(fields['asset_urls'])} asset(s))")
     # GH Actions maps an unset secret to an EMPTY string, so os.environ[...]
     # would succeed and fail later cryptically — and burn the queue row.
-    missing = [k for k in REQUIRED_ENV[platform] if not os.environ.get(k)]
+    pcfg = pcfg or {}
+    missing = [k for k in required_env(platform, pcfg)
+               if not os.environ.get(k)]
     if missing:
         raise ValueError(
             f"{platform}: missing or empty env secret(s): {', '.join(missing)} "
             "(row left Ready; set the GitHub repo secrets)")
+    # Refuse rather than truncate. A silently shortened caption loses whatever
+    # sits at the END — for Athena that is the sources block and hashtags, the
+    # part the editorial spec says never to trim.
+    caption_limit = pcfg.get("caption_limit")
+    if caption_limit is not None and len(fields["caption"]) > caption_limit:
+        raise ValueError(
+            f"caption is {len(fields['caption'])} chars, over "
+            f"{fields['project']}'s caption_limit of {caption_limit} "
+            "(row left Ready; shorten the caption or raise the limit in "
+            "channels.yaml)")
     mark_posting(notion, page)
     try:
         with tempfile.TemporaryDirectory() as tmp:
-            url = PLATFORM_POSTERS[platform](fields, tmp)
+            url = PLATFORM_POSTERS[platform](fields, tmp, pcfg)
     except Exception as e:  # noqa: BLE001 — any failure must stamp the row, not crash the tick
         record_result(notion, page, platform, error=str(e)[:500])
         raise
@@ -119,7 +162,7 @@ def run_tick(cfg, env, notion, now, dry_run=False, force=False) -> int:
                 if page is None:
                     continue  # nothing overdue: silent skip by design
                 try:
-                    lines.append(_publish(notion, page, platform, dry_run))
+                    lines.append(_publish(notion, page, platform, dry_run, pcfg))
                 except Exception as e:  # noqa: BLE001
                     failures.append(f"FAILED {project}->{platform}: {e}")
 
@@ -137,7 +180,7 @@ def run_tick(cfg, env, notion, now, dry_run=False, force=False) -> int:
                     if page is None:
                         continue  # empty queue: silent skip by design
                     try:
-                        lines.append(_publish(notion, page, platform, dry_run))
+                        lines.append(_publish(notion, page, platform, dry_run, pcfg))
                     except Exception as e:  # noqa: BLE001
                         failures.append(f"FAILED {project}->{platform}: {e}")
     except Exception as e:  # noqa: BLE001 — SMS contract: always print, always exit 1
@@ -161,7 +204,9 @@ def main():
     cfg = load_channels(Path(__file__).resolve().parent.parent / "channels.yaml")
     env = {
         "db_id": os.environ["POST_QUEUE_DB_ID"],
-        "project_names": {"useful-math": "Useful Math"},
+        # slug -> Notion "Project" value, derived from channels.yaml so a
+        # new project never needs a code change.
+        "project_names": project_names(cfg),
     }
     notion = Client(auth=os.environ["NOTION_TOKEN"])
     sys.exit(run_tick(cfg, env, notion,

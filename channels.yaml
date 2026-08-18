@@ -1,4 +1,28 @@
-# Projects and their target platforms. Scheduling lives on each row's
-# "Publish Date & Time" (Notion) — no fixed slots.
+# Every project lives entirely here: its Notion "Project" value, its
+# platforms, its caption cap, and the NAMES of the env vars holding its
+# credentials. Adding a project is this block plus its GitHub secrets — no
+# code change anywhere.
+#
+# Scheduling is per row ("Publish Date & Time" in Notion), not here.
+#
+# Instagram credentials are named outright, never derived and never shared:
+# config_loader refuses to let two projects claim the same pair, because the
+# failure that prevents is publishing one brand's post to another's account.
+#
+# caption_limit is the project's EDITORIAL cap, defaulting to Instagram's hard
+# 2200. A row over its limit fails loudly instead of being truncated —
+# truncation eats the END of a caption, where sources and hashtags live.
+
 useful-math:
+  notion_project: "Useful Math"
   platforms: [youtube-shorts, ig-reels]
+  caption_limit: 2000
+  ig_user_id_env: IG_USER_ID
+  ig_access_token_env: IG_ACCESS_TOKEN
+
+athena:
+  notion_project: "Athena"
+  platforms: [ig-carousel]
+  caption_limit: 2200
+  ig_user_id_env: IG_USER_ID_ATHENA
+  ig_access_token_env: IG_ACCESS_TOKEN_ATHENA

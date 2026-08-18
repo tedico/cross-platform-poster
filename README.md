@@ -31,10 +31,35 @@ the Pivot section of `docs/superpowers/specs/2026-07-07-cross-platform-poster-de
   the `IG_ACCESS_TOKEN` secret monthly (5th of each month) so it never lapses.
 - **The YouTube OAuth app must be in PRODUCTION status**, or Google expires the refresh
   token after 7 days and every upload dies with `invalid_grant`.
-- **`ig-carousel` exists in the Post Queue schema but has NO poster client yet.** Do not
-  tag rows with it: a multi-platform row including `ig-carousel` returns to `Ready` after
-  its other platforms post and sits there forever (a row is only `Posted` once every
-  tagged platform has a permalink).
+- **`ig-carousel` ships (2026-08-17)** — `src/instagram_carousel_client.py` posts a 2–10
+  image carousel: one child container per image, one `CAROUSEL` parent carrying the
+  caption, then `media_publish`. Every image URL must be public *and still alive at
+  publish time*, since the cron runs roughly hourly.
+- **A project is defined entirely in `channels.yaml`** — its Notion `Project` value, its
+  platforms, its caption cap, and the **names** of the env vars holding its credentials.
+  Adding a project is one config block plus its GitHub secrets; there is no code to
+  change.
+- **Instagram credentials are per project and never shared.** Projects post as different
+  accounts (`@useful_math_`, `@athena_make_useful_things`), so each names its own
+  `ig_user_id_env` / `ig_access_token_env`. Nothing is derived from the project name and
+  **there is deliberately no fallback**: a missing secret leaves the row `Ready` and
+  reports it. `load_channels` also refuses to let two projects claim the same credential
+  env var, because the failure being designed out — publishing one brand's post to
+  another's account — is public and not undoable.
+
+### Adding a project
+
+```yaml
+my-project:
+  notion_project: "My Project"        # exact Post Queue "Project" select value
+  platforms: [ig-carousel]
+  caption_limit: 2200                 # optional; defaults to IG's hard 2200
+  ig_user_id_env: IG_USER_ID_MY_PROJECT
+  ig_access_token_env: IG_ACCESS_TOKEN_MY_PROJECT
+```
+
+Then set those two secrets on the repo, copy `adapter/post_queue_adapter.py` into the
+consumer, and add the project to the `Used By` list below.
 
 ## Setup
 
