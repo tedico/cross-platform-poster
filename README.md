@@ -58,8 +58,15 @@ my-project:
   ig_access_token_env: IG_ACCESS_TOKEN_MY_PROJECT
 ```
 
-Then set those two secrets on the repo, copy `adapter/post_queue_adapter.py` into the
-consumer, and add the project to the `Used By` list below.
+Then, in order:
+
+1. set those two secrets on the repo (`gh secret set IG_USER_ID_MY_PROJECT ...`)
+2. **map them into `.github/workflows/tick.yml`'s `env:` block** — GitHub exposes no
+   secret unless it is named there, and there is no wildcard. Skipping this is the one
+   step that looks done but isn't: `gh secret list` shows the secret, and the tick still
+   reports `missing or empty env secret(s)`. It cost Athena its first live run.
+3. copy `adapter/post_queue_adapter.py` into the consumer
+4. add the project to the `Used By` list below
 
 ## Setup
 

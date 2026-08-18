@@ -37,8 +37,16 @@ jobs:
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          # Instagram credentials are PER PROJECT (see channels.yaml). GitHub
+          # will not expose a secret unless it is mapped here by name — there is
+          # no wildcard — so ADDING A PROJECT MEANS ADDING ITS TWO LINES BELOW,
+          # not just its channels.yaml block. Miss this and tick reports
+          # "missing or empty env secret(s)" even though the secret exists on
+          # the repo, which is exactly what happened on Athena's first run.
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          IG_USER_ID_ATHENA: ${{ secrets.IG_USER_ID_ATHENA }}
+          IG_ACCESS_TOKEN_ATHENA: ${{ secrets.IG_ACCESS_TOKEN_ATHENA }}
           ASSET_STORE_TOKEN: ${{ secrets.ASSET_STORE_TOKEN }}
         run: python -m src.tick ${{ inputs.dry_run && '--dry-run' || '' }} ${{ inputs.force && '--force' || '' }}
       # Dead-man's-switch heartbeat (UsefulMath spec 2026-07-24): exactly one ping
