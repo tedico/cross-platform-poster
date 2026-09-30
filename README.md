@@ -23,8 +23,9 @@ the Pivot section of `docs/superpowers/specs/2026-07-07-cross-platform-poster-de
   the watchdog. No servers, no containers.
 - **Scheduled workflows run only on the default branch.** Nothing posts (and the watchdog
   alarms "no completed tick run") until the code is merged to `main`.
-- **GitHub throttles the */15 cron to roughly hourly**, so a dated row posts up to ~an
-  hour after its Publish Date & Time (the cron is the date-checker heartbeat).
+- **GitHub throttles the */15 cron hard** — since 2026-08-27 ticks land every 3–6.5h
+  (median), up to 8h — so a dated row can post hours after its Publish Date & Time (the
+  cron is the date-checker heartbeat).
 - **Asset URLs must be PUBLICLY fetchable.** Instagram's API downloads the video itself
   from the URL in the row — a private URL fails the container step every time.
 - **IG long-lived tokens expire after ~60 days.** The `Refresh IG Token` workflow rotates
@@ -34,7 +35,7 @@ the Pivot section of `docs/superpowers/specs/2026-07-07-cross-platform-poster-de
 - **`ig-carousel` ships (2026-08-17)** — `src/instagram_carousel_client.py` posts a 2–10
   image carousel: one child container per image, one `CAROUSEL` parent carrying the
   caption, then `media_publish`. Every image URL must be public *and still alive at
-  publish time*, since the cron runs roughly hourly.
+  publish time*, since ticks can be hours apart.
 - **A project is defined entirely in `channels.yaml`** — its Notion `Project` value, its
   platforms, its caption cap, and the **names** of the env vars holding its credentials.
   Adding a project is one config block plus its GitHub secrets; there is no code to
@@ -135,7 +136,7 @@ How a row flows:
 Posting is purely date-driven: the **Publish Date & Time** property (date WITH time) on
 the row is the entire schedule. Set it on the Video Production row before approving — or
 directly on the Post Queue row. A dated `Ready` row posts at the first tick run at/after
-its moment, any day, any hour (runs are roughly hourly, so expect up to ~an hour of drift
+its moment, any day, any hour (ticks land every few hours, so expect up to ~8h of drift
 past the set time). A future date is a deliberate hold — nothing, including `--force`,
 posts it early.
 
@@ -216,7 +217,7 @@ This is the instruction guide for plugging ANYTHING into the poster.
 | Error | text | Failure detail, stamped by the tick |
 | (created time) | built-in | Drives oldest-first draining — Notion's automatic timestamp, no column needed |
 
-**Tick** (`src/tick.py`, GitHub Actions cron every 15 min — delivered roughly hourly by
+**Tick** (`src/tick.py`, GitHub Actions cron every 15 min — delivered every 3–8h by
 GH throttling): on every tick, a **dated pass** publishes, for each configured
 project+platform, the earliest `Ready` row whose **Publish Date & Time** is at/before
 now and whose platform is not yet in its Posted Links. Undated `Ready` rows are never
@@ -243,7 +244,7 @@ may raise (else a LIVE Reel's row would go `Failed` and re-post on re-Ready).
 
 **Watchdog** (`src/watchdog.py`, hourly Zo automation): GitHub Actions runners are
 ephemeral, so liveness comes from run history via the public GitHub API (retried once on
-API blips). It alarms on: no completed tick run in 45 min (three missed ticks), any
+API blips). It alarms on: no completed tick run in 9h (past the worst observed GH lag), any
 failed tick run in the last 90 min, the monthly IG-token-refresh workflow failing or
 stale >35 days (once it has ever run), and rows stuck in `Posting` >1h. At 6 AM ET on the
 1st of the month it force-exits non-zero with a heartbeat message — a monthly SMS proving
