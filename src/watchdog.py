@@ -21,11 +21,11 @@ from src.tick import STUCK_AGE
 
 GITHUB_REPO = "tedico/cross-platform-poster"
 TICK_WORKFLOW = "tick.yml"
-# The cron says */15, but GitHub throttles scheduled workflows hard under
-# congestion — observed overnight gaps up to ~2h46 between completed ticks
-# (2026-07-23) with every run green. Alarm only past the worst observed lag;
+# The cron says */15, but GitHub throttles scheduled workflows hard. Since
+# 2026-08-27 completed ticks land every 3-6.5h (median), max observed 8h
+# (2026-08-31), every run green. Alarm only past the worst observed lag;
 # the queue drains 1 post/day/platform, so hours of tick delay cost nothing.
-NO_RUN_ALARM = 240 * 60
+NO_RUN_ALARM = 540 * 60
 # hourly cadence + drift margin; a duplicate SMS about a real failure beats a missed one
 FAILURE_WINDOW = 90 * 60
 

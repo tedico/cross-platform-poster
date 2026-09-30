@@ -54,14 +54,14 @@ def test_recent_successful_run_healthy(mocker):
 
 
 def test_no_recent_run_flagged(mocker):
-    _api(mocker, [_gh_response([_run(NOW - timedelta(hours=5))])])
+    _api(mocker, [_gh_response([_run(NOW - timedelta(hours=10))])])
     problems = workflow_run_problems(NOW)
     assert any("no completed tick run" in p for p in problems)
 
 
 def test_github_cron_lag_not_flagged(mocker):
-    # */15 cron routinely gaps 2-3h under GitHub congestion — that's lag, not death
-    _api(mocker, [_gh_response([_run(NOW - timedelta(hours=3))])])
+    # */15 cron routinely gaps 3-8h under GitHub throttling (since 2026-08-27) — that's lag, not death
+    _api(mocker, [_gh_response([_run(NOW - timedelta(hours=8))])])
     assert workflow_run_problems(NOW) == []
 
 
