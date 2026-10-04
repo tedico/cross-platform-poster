@@ -22,6 +22,17 @@ jobs:
         run: |
           NEW_TOKEN=$(python scripts/refresh_ig_token.py)
           gh secret set IG_ACCESS_TOKEN --body "$NEW_TOKEN" --repo ${{ github.repository }}
+      # Athena's account has its own ~60-day token (channels.yaml → IG_ACCESS_TOKEN_ATHENA);
+      # it was never refreshed and would lapse ~2026-10-16. Runs even if the step above
+      # failed, so one brand's refresh can't strand the other; the job still fails.
+      - name: Refresh and rotate the Athena secret
+        if: success() || failure()
+        env:
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN_ATHENA }}
+          GH_TOKEN: ${{ secrets.ADMIN_PAT }}
+        run: |
+          NEW_TOKEN=$(python scripts/refresh_ig_token.py)
+          gh secret set IG_ACCESS_TOKEN_ATHENA --body "$NEW_TOKEN" --repo ${{ github.repository }}
       # Dead-man's-switch heartbeat (UsefulMath spec 2026-07-24): exactly one ping
       # per run, success or /fail; must never fail the job (|| true).
       - name: Heartbeat
